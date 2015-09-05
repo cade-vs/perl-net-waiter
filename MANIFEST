@@ -1,0 +1,7 @@
+MANIFEST
+COPYING
+Changes
+README
+Makefile.PL
+lib/Net/Waiter.pm
+
