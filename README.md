@@ -32,18 +32,42 @@
     use MyWaiter;
 
     my $server = MyWaiter->new( PORT => 9123 );
-    $server->run();
+    my $res = $server->run();
+    print "waiter result: $res\n"; # 0 is ok, >0 is error
     
 
 
 
 # METHODS/FUNCTIONS
 
+## new( OPTION => VALUE, ... )
+
+Creates new Net::Waiter object and sets its options:
+
+    PORT    => 9123, # which port to listen on
+    PREFORK => 0,    # how many preforked processes, TODO
+    NOFORK  => 0,    # if 1 will not fork, only single client will be accepted
+    SSL     => 1,    # use SSL
+
+if SSL is enabled then additional IO::Socket::SSL options can be added:
+
+    SSL_cert_file => 'cert.pem',
+    SSL_key_file  => 'key.pem', 
+    SSL_ca_file   => 'ca.pem',
+
+for further details, check IO::Socket::SSL docs.   
+   
+
 ## run()
 
 This executes server main loop. It will create new server socket, set
 options (listen port, ssl options, etc.) then fork and call handlers along
 the way.
+
+Run returns exit code:
+
+      0 -- ok
+    100 -- cannot create server listen socket
 
 ## break\_main\_loop()
 
@@ -136,7 +160,6 @@ GITHUB repository:
     https://github.com/cade-vs/perl-net-waiter
 
     git@github.com:cade-vs/perl-net-waiter.git
-    
 
     git clone git://github.com/cade-vs/perl-net-waiter.git
     
