@@ -383,6 +383,13 @@ However it uses some 3rd party modules:
 
   * IO::Socket::INET
 
+=head1 DEMO
+
+For demo server check 'demo' directory in the source tar package or at the
+GITHUB repository:
+
+  
+
 =head1 GITHUB REPOSITORY
 
   git@github.com:cade-vs/perl-net-waiter.git
