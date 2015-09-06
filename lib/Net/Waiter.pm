@@ -388,9 +388,11 @@ However it uses some 3rd party modules:
 For demo server check 'demo' directory in the source tar package or at the
 GITHUB repository:
 
-  
+  https://github.com/cade-vs/perl-net-waiter/tree/master/demo  
 
 =head1 GITHUB REPOSITORY
+
+  https://github.com/cade-vs/perl-net-waiter
 
   git@github.com:cade-vs/perl-net-waiter.git
   
