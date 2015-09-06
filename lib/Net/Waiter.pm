@@ -299,6 +299,23 @@ sub on_sig_usr2
 
 =head1 METHODS/FUNCTIONS
 
+=head2 new( OPTION => VALUE, ... )
+
+Creates new Net::Waiter object and sets its options:
+
+   PORT    => 9123, # which port to listen on
+   PREFORK => 0,    # how many preforked processes, TODO
+   NOFORK  => 0,    # if 1 will not fork, only single client will be accepted
+   SSL     => 1,    # use SSL
+
+if SSL is enabled then additional IO::Socket::SSL options can be added:
+
+   SSL_cert_file => 'cert.pem',
+   SSL_key_file  => 'key.pem', 
+   SSL_ca_file   => 'ca.pem',
+
+for further details, check IO::Socket::SSL docs.   
+   
 =head2 run()
 
 This executes server main loop. It will create new server socket, set
@@ -395,7 +412,7 @@ GITHUB repository:
   https://github.com/cade-vs/perl-net-waiter
 
   git@github.com:cade-vs/perl-net-waiter.git
-  
+
   git clone git://github.com/cade-vs/perl-net-waiter.git
   
 =head1 AUTHOR
