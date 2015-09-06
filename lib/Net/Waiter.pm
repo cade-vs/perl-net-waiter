@@ -58,7 +58,6 @@ sub run
     die "SSL not available: $@" if $@;
     };
 
-
   $SIG{ 'INT'  } = sub { $self->break_main_loop(); };
   $SIG{ 'CHLD' } = sub { $self->__sig_child(); };
   $SIG{ 'USR1' } = sub { $self->__sig_usr1();  };
@@ -80,6 +79,7 @@ sub run
 
                                          %ssl_opts,
                                          );
+
     }
   else
     {
@@ -294,7 +294,8 @@ sub on_sig_usr2
   use MyWaiter;
 
   my $server = MyWaiter->new( PORT => 9123 );
-  $server->run();
+  my $res = $server->run();
+  print "waiter result: $res\n"; # 0 is ok, >0 is error
   
 
 =head1 METHODS/FUNCTIONS
@@ -321,6 +322,11 @@ for further details, check IO::Socket::SSL docs.
 This executes server main loop. It will create new server socket, set
 options (listen port, ssl options, etc.) then fork and call handlers along
 the way.
+
+Run returns exit code:
+
+    0 -- ok
+  100 -- cannot create server listen socket
 
 =head2 break_main_loop()
 

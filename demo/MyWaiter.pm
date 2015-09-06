@@ -39,7 +39,8 @@ sub on_process
 {
   my $sock = $_[1];
   dump_args( @_ );
-  print $sock "hello world\n";
+
+  print $sock "HTTP/1.0 200 OK\n\nhello world\n";
 }
 
 sub on_close

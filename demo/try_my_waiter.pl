@@ -5,6 +5,7 @@ use MyWaiter;
 
 my $server = MyWaiter->new( PORT => 9123 );
 
-$server->run();
+my $res = $server->run();
+print "waiter result: $res\n";
 
 
