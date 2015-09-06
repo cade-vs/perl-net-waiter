@@ -1,2 +1,2 @@
 #!/bin/bash
-pod2markdown < lib/Data/Tools.pm > README.md
+pod2markdown < lib/Net/Waiter.pm > README.md
