@@ -1,6 +1,6 @@
 package MyWaiter;
 use strict;
-use base qw( Net::Waiter );
+use parent qw( Net::Waiter );
 
 use Data::Dumper;
 
