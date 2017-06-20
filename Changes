@@ -1,5 +1,9 @@
 Revision history for Perl extension Net::Waiter
 
+1.02  2017.06.21
+
+    1. client socket explicit close fix
+
 1.01  2016.08.14
 
     1. added get_server_socket() method

@@ -13,7 +13,7 @@ use strict;
 use POSIX ":sys_wait_h";
 use IO::Socket::INET;
 
-our $VERSION = '1.01';
+our $VERSION = '1.02';
 
 ##############################################################################
             
@@ -133,6 +133,7 @@ sub run
       if( $pid )
         {
         $self->on_fork_ok( $pid );
+        $client_socket->close();
         next;
         }
       }
