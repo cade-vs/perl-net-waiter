@@ -286,7 +286,7 @@ sub on_sig_usr2
 
 =head1 NAME
 
-  Net::Waiter compact INET socket server
+Net::Waiter - Compact INET socket server
 
 =head1 SYNOPSIS
 
