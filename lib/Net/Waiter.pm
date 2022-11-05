@@ -1,9 +1,9 @@
 ##############################################################################
 #
 #  Net::Waiter concise INET socket server
-#  (c) Vladi Belperchinov-Shabanski "Cade" 2015
-#  http://cade.datamax.bg
-#  <cade@bis.bg> <cade@biscom.net> <cade@datamax.bg> <cade@cpan.org>
+#  (c) Vladi Belperchinov-Shabanski "Cade" 2015-2022
+#  http://cade.noxrun.com
+#        <cade@noxrun.com> <cade@bis.bg> <cade@cpan.org>
 #
 #  GPL
 #
@@ -13,7 +13,7 @@ use strict;
 use POSIX ":sys_wait_h";
 use IO::Socket::INET;
 
-our $VERSION = '1.02';
+our $VERSION = '1.03';
 
 ##############################################################################
             
@@ -70,7 +70,7 @@ sub run
   if( $self->ssl_in_use() )
     {
     my %ssl_opts = %{ $self->{ 'SSL_OPTS' } };
-    $ssl_opts{ SSL_error_trap  } = sub { shift; $self->on_ssl_error( shift() ); },
+    $ssl_opts{ 'SSL_error_trap'  } = sub { shift; $self->on_ssl_error( shift() ); },
 
     $server_socket = IO::Socket::SSL->new(  
                                          Proto     => 'tcp',
@@ -99,6 +99,7 @@ sub run
     }
   else
     {
+    binmode( $server_socket );
     $self->{ 'SERVER_SOCKET' } = $server_socket;
     $self->on_listen_ok();
     }
@@ -113,6 +114,7 @@ sub run
       next;
       }
 
+    binmode( $client_socket );
     $self->{ 'CLIENT_SOCKET' } = $client_socket;
 
     my $peerhost = $client_socket->peerhost();
@@ -164,6 +166,7 @@ sub run
 
   $self->on_server_close( $server_socket );
   close( $server_socket );
+  return 0;
 }
 
 ##############################################################################
