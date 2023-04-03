@@ -126,7 +126,7 @@ sub run
   while(4)
     {
     last if $self->{ 'BREAK_MAIN_LOOP' };
-    my $bk = $self->get_busy_kids();
+    my $bk = $self->get_busy_kids_count();
  
     if( $self->{ 'PREFORK' } > 0 )
       {
@@ -157,7 +157,7 @@ sub __run_forking
   if( ! $client_socket )
     {
     $self->on_accept_error();
-    next;
+    return;
     }
 
   binmode( $client_socket );
@@ -196,7 +196,7 @@ sub __run_forking
       next;
       }
     }
-  # --------- child here ---------
+  # --------- kid here ---------
   delete $self->{ 'SERVER_SOCKET' };
 
   # reinstall signal handlers in the kid
@@ -228,6 +228,8 @@ sub __run_prefork
   my $self          = shift;
   my $server_socket = shift;
 
+  $server_socket->blocking( 0 );
+
   my $prefork_count = $self->{ 'PREFORK' };
 
   while(4)
@@ -235,7 +237,7 @@ sub __run_prefork
     last if $self->{ 'BREAK_MAIN_LOOP' };
  
     my $kk = $self->{ 'KIDS' }; # kids k'ount ;)
-    my $bk = scalar( grep { $_ eq '*' } values %{ $self->{ 'SHA' } } ); # busy kids count
+    my $bk = $self->get_busy_kids_count();
     my $ik = $kk - $bk; # idle kids count
 
     $self->{ 'STATS' }{ 'IDLE FREQ' }{ $ik }++ if $bk > 0;
@@ -260,7 +262,6 @@ sub __run_prefork
         }
       if( $pid )
         {
-print STDERR ">>>>>>>>>>> spawning new kid $pid\n";    
         $self->{ 'KIDS' }++;
         $self->{ 'KID_PIDS' }{ $pid } = 1;
         $self->on_fork_ok( $pid );
@@ -269,21 +270,27 @@ print STDERR ">>>>>>>>>>> spawning new kid $pid\n";
       else
         {
         # --------- child here ---------
+        $self->{ 'CHILD'  } = 1;
+        $self->{ 'SPTIME' } = time();
         delete $self->{ 'SERVER_SOCKET' };
-        
+
         while(4)
           {
           last if $self->{ 'BREAK_MAIN_LOOP' };
           exit unless $self->__run_preforked_child( $server_socket );
-          print "++++++++++++++++++++++++loop kid $$ +++ $self->{ 'BREAK_MAIN_LOOP' }+++++++++++++++++++++++++++++\n";
+          my $kid_idle = $self->{ 'LPTIME' } > 0 ? time() - $self->{ 'LPTIME' } : - ( time() - $self->{ 'SPTIME' } );
+          if( $self->{ 'LPTIME' } > 0 and $kid_idle > 10 )
+            {
+            exit;
+            }
           }
         exit;  
         # ------- child ends here -------
         }  
-print STDERR "--ESTIMATE-- $tk = $kk + $prefork_count if $ik < ( 1 + $kk / 10 );\n";    
+#print STDERR "--ESTIMATE-- $tk = $kk + $prefork_count if $ik < ( 1 + $kk / 10 );\n";    
       }
     
-print STDERR "sleeping for 4 secs...........................$self->{ 'KIDS' } / $bk...........\n" . Dumper( $self->{ 'SHA' } );
+#print STDERR "sleeping for 4 secs...........................$self->{ 'KIDS' } / $bk...........\n" . Dumper( $self->{ 'SHA' } );
     sleep(4);
     }
 }
@@ -294,12 +301,16 @@ sub __run_preforked_child
   my $server_socket = shift;
 
   $self->im_idle();
-  my $client_socket = $server_socket->accept();
-  if( ! $client_socket )
+
+  my $client_socket;
+  my $sel = new IO::Select $server_socket;
+  if( ! ( $sel->can_read( 4 ) and $client_socket = $server_socket->accept() ) )
     {
-    $self->on_accept_error();
-    return undef;
+    $self->on_prefork_child_idle();
+    return '0E0';
     }
+
+print STDERR "-----OK------ ACCEPT $$ RES $client_socket\n\n\n";
 
   binmode( $client_socket );
   $self->{ 'CLIENT_SOCKET' } = $client_socket;
@@ -312,23 +323,26 @@ sub __run_preforked_child
   $self->on_accept_ok( $client_socket );
 
   # reinstall signal handlers in the kid
-  $SIG{ 'INT'  } = 'DEFAULT';
-  $SIG{ 'CHLD' } = 'DEFAULT';
-  $SIG{ 'USR1' } = 'DEFAULT';
-  $SIG{ 'USR2' } = 'DEFAULT';
+  $SIG{ 'INT'   } = 'DEFAULT';
+  $SIG{ 'CHLD'  } = 'DEFAULT';
+  $SIG{ 'USR1'  } = 'DEFAULT';
+  $SIG{ 'USR2'  } = 'DEFAULT';
+  $SIG{ 'RTMIN' } = 'DEFAULT';
+  $SIG{ 'RTMAX' } = 'DEFAULT';
 
   srand();
 
-  $self->{ 'CHILD' } = 1;
-
   $self->im_busy();
   $client_socket->autoflush( 1 );
-  $self->on_process( $client_socket );
+  my $res = $self->on_process( $client_socket );
   $self->on_close( $client_socket );
   $client_socket->close();
   $self->im_idle();
+
+  $self->{ 'LPTIME' } = time(); # last processing time
   
-  return 1;
+print STDERR "running preforked kid [$$] res [$res]\n";
+  return $res;
 }
 
 ##############################################################################
@@ -347,11 +361,11 @@ sub get_client_socket
   return exists $self->{ 'CLIENT_SOCKET' } ? $self->{ 'CLIENT_SOCKET' } : undef;
 }
 
-sub get_busy_kids
+sub get_busy_kids_count
 {
   my $self = shift;
   
-  return $self->{ 'BUSY_KIDS' } || 0;
+  return scalar( grep { $_ eq '*' } values %{ $self->{ 'SHA' } } ) || 0;
 }
 
 sub get_parent_pid
@@ -387,8 +401,8 @@ sub __im_in_state
   $self->{ 'SHA' }{ $$ } = $state;
   tied( %{ $self->{ 'SHA' } } )->unlock();
   
-#  return kill( 'RTMIN', $ppid ) if $state eq 'IDLE';
-#  return kill( 'RTMAX', $ppid ) if $state eq 'BUSY';
+  return kill( 'RTMIN', $ppid ) if $state eq '-';
+  return kill( 'RTMAX', $ppid ) if $state eq '*';
   return 0;
 }
 
@@ -455,24 +469,14 @@ sub __sig_kid_idle
 {
   my $self = shift;
 
-#  $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle();  };
-  $self->{ 'BUSY_KIDS' }--;
   $self->on_sig_kid_idle();
-
-print STDERR "parent [$$] got kid IDLE, currently BUSY $self->{ 'BUSY_KIDS' }\n" . Dumper( \@_ );    
-
 }
 
 sub __sig_kid_busy
 {
   my $self = shift;
 
-#  $SIG{ 'RTMAX'   } = sub { $self->__sig_kid_busy();  };
-  $self->{ 'BUSY_KIDS' }++;
   $self->on_sig_kid_busy();
-
-print STDERR "parent [$$] got kid BUSY, currently BUSY $self->{ 'BUSY_KIDS' }\n" . Dumper( \@_ );    
-
 }
 
 ##############################################################################
@@ -493,7 +497,13 @@ sub on_fork_ok
 {
 }
 
+# called when connection is accepted and processing requested on socket data
 sub on_process
+{
+}
+
+# called on preforked childs, when accept timeouts
+sub on_prefork_child_idle
 {
 }
 
