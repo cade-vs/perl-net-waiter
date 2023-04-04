@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Time::HiRes qw( sleep );
 
-our $VERSION = '1.04';
+our $VERSION = '1.05';
 
 ##############################################################################
             
