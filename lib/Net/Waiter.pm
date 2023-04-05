@@ -228,8 +228,6 @@ sub __run_prefork
   my $self          = shift;
   my $server_socket = shift;
 
-  $server_socket->blocking( 0 );
-
   my $prefork_count = $self->{ 'PREFORK' };
 
   while(4)
@@ -273,13 +271,14 @@ sub __run_prefork
         $self->{ 'CHILD'  } = 1;
         $self->{ 'SPTIME' } = time();
         delete $self->{ 'SERVER_SOCKET' };
+        $self->im_idle();
 
         while(4)
           {
           last if $self->{ 'BREAK_MAIN_LOOP' };
           exit unless $self->__run_preforked_child( $server_socket );
           my $kid_idle = $self->{ 'LPTIME' } > 0 ? time() - $self->{ 'LPTIME' } : - ( time() - $self->{ 'SPTIME' } );
-          if( $self->{ 'LPTIME' } > 0 and $kid_idle > 10 )
+          if( $self->{ 'LPTIME' } > 0 and $kid_idle > 110 )
             {
             exit;
             }
@@ -291,7 +290,7 @@ sub __run_prefork
       }
     
 #print STDERR "sleeping for 4 secs...........................$self->{ 'KIDS' } / $bk...........\n" . Dumper( $self->{ 'SHA' } );
-    sleep(4);
+    sleep(6);
     }
 }
 
@@ -300,17 +299,15 @@ sub __run_preforked_child
   my $self          = shift;
   my $server_socket = shift;
 
-  $self->im_idle();
-
-  my $client_socket;
-  my $sel = new IO::Select $server_socket;
-  if( ! ( $sel->can_read( 4 ) and $client_socket = $server_socket->accept() ) )
+  if( ! socket_can_read( $server_socket, 4 ) )
     {
+    #print STDERR "-----ERR------ ACCEPT $$ RES >>> $!\n\n\n";
     $self->on_prefork_child_idle();
     return '0E0';
     }
 
-print STDERR "-----OK------ ACCEPT $$ RES $client_socket\n\n\n";
+  my $client_socket = $server_socket->accept();
+#print STDERR "-----OK------ ACCEPT $$ RES $client_socket >>> $!\n";
 
   binmode( $client_socket );
   $self->{ 'CLIENT_SOCKET' } = $client_socket;
@@ -332,6 +329,7 @@ print STDERR "-----OK------ ACCEPT $$ RES $client_socket\n\n\n";
 
   srand();
 
+  $self->{ 'BUSY_COUNT' }++;
   $self->im_busy();
   $client_socket->autoflush( 1 );
   my $res = $self->on_process( $client_socket );
@@ -341,7 +339,7 @@ print STDERR "-----OK------ ACCEPT $$ RES $client_socket\n\n\n";
 
   $self->{ 'LPTIME' } = time(); # last processing time
   
-print STDERR "running preforked kid [$$] res [$res]\n";
+#print STDERR "-----------------------running preforked kid [$$] res [$res]\n";
   return $res;
 }
 
@@ -365,7 +363,7 @@ sub get_busy_kids_count
 {
   my $self = shift;
   
-  return scalar( grep { $_ eq '*' } values %{ $self->{ 'SHA' } } ) || 0;
+  return scalar( grep { substr( $_, 0, 1 ) eq  '*' } values %{ $self->{ 'SHA' } } ) || 0;
 }
 
 sub get_parent_pid
@@ -398,7 +396,7 @@ sub __im_in_state
   return 0 if $ppid == $$; # states are available only for kids
 
   tied( %{ $self->{ 'SHA' } } )->lock();
-  $self->{ 'SHA' }{ $$ } = $state;
+  $self->{ 'SHA' }{ $$ } = $state . "/" . $self->{ 'BUSY_COUNT' };
   tied( %{ $self->{ 'SHA' } } )->unlock();
   
   return kill( 'RTMIN', $ppid ) if $state eq '-';
@@ -543,6 +541,32 @@ sub on_sig_kid_busy
 {
 }
 
+
+##############################################################################
+
+# backported from Data::Tools::Socket to reduce dependency
+# https://metacpan.org/pod/Data::Tools
+# https://github.com/cade-vs/perl-data-tools
+
+sub socket_can_write
+{
+  my $sock    = shift;
+  my $timeout = shift;
+
+  my $win;
+  vec( $win, fileno( $sock ), 1 ) = 1;
+  return select( undef, $win, undef, $timeout ) > 0;
+}
+
+sub socket_can_read
+{
+  my $sock    = shift;
+  my $timeout = shift;
+
+  my $rin;
+  vec( $rin, fileno( $sock ), 1 ) = 1;
+  return select( $rin, undef, undef, $timeout ) > 0;
+}
 
 ##############################################################################
 
