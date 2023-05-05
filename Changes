@@ -1,5 +1,9 @@
 Revision history for Perl extension Net::Waiter
 
+1.05  2023.04.05
+
+    1. prefork logic tuning, helper functions, cleanup
+
 1.04  2023.03.31
 
     1. PREFORK mode implemented
