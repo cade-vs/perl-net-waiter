@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Time::HiRes qw( sleep );
 
-our $VERSION = '1.05';
+our $VERSION = '1.06';
 
 ##############################################################################
             
@@ -216,11 +216,12 @@ sub __run_forking
   $client_socket->close();
   $self->im_idle();
   
+  $self->on_child_exit();
   if( ! $self->{ 'NOFORK' } )
     {
     exit();
     }
-  # ------- child ends here -------
+  # ------- child exits here -------
 }
 
 sub __run_prefork
@@ -276,15 +277,15 @@ sub __run_prefork
         while(4)
           {
           last if $self->{ 'BREAK_MAIN_LOOP' };
-          exit unless $self->__run_preforked_child( $server_socket );
+          last unless $self->__run_preforked_child( $server_socket );
           my $kid_idle = $self->{ 'LPTIME' } > 0 ? time() - $self->{ 'LPTIME' } : - ( time() - $self->{ 'SPTIME' } );
-          if( $self->{ 'LPTIME' } > 0 and $kid_idle > 110 )
-            {
-            exit;
-            }
+          last if $self->{ 'LPTIME' } > 0 and $kid_idle > 110;
+#print STDERR "----------- prefork child reuse [$$] \n\n";
           }
+#print STDERR "----------- prefork child EXIT  [$$] \n";
+        $self->on_child_exit();
         exit;  
-        # ------- child ends here -------
+        # ------- child exits here -------
         }  
 #print STDERR "--ESTIMATE-- $tk = $kk + $prefork_count if $ik < ( 1 + $kk / 10 );\n";    
       }
@@ -509,6 +510,11 @@ sub on_maxforked
 {
 }
 
+# called just before forked or preforked child exits
+sub on_child_exit
+{
+}
+
 sub on_close
 {
 }
@@ -706,6 +712,10 @@ client socket close.
 note: this handler is only used for FORKING server. preforked servers will
 not accept the socket at all if MAXFORK has been reached. the reason is that
 forking server may release child process during the accept() call.
+
+=head2 on_child_exit()
+
+Called inside a child, just before forked or preforked child exits.
 
 =head2 on_close( $client_socket )
 
