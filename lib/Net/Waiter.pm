@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Time::HiRes qw( sleep );
 
-our $VERSION = '1.06';
+our $VERSION = '1.07';
 
 ##############################################################################
             
@@ -93,6 +93,7 @@ sub run
                                          LocalPort => $self->{ 'PORT' },
                                          Listen    => 128,
                                          ReuseAddr => 1,
+                                         Timeout   => 4,
 
                                          %ssl_opts,
                                          );
@@ -105,6 +106,7 @@ sub run
                                          LocalPort => $self->{ 'PORT' },
                                          Listen    => 128,
                                          ReuseAddr => 1,
+                                         Timeout   => 4,
                                          );
     }
 
@@ -308,6 +310,7 @@ sub __run_preforked_child
     }
 
   my $client_socket = $server_socket->accept();
+  return '0E0' unless $client_socket;
 #print STDERR "-----OK------ ACCEPT $$ RES $client_socket >>> $!\n";
 
   binmode( $client_socket );
