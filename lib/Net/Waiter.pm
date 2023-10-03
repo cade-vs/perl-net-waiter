@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Time::HiRes qw( sleep );
 
-our $VERSION = '1.07';
+our $VERSION = '1.08';
 
 ##############################################################################
             
@@ -83,32 +83,28 @@ sub run
 
   my $server_socket;
 
+  my $sock_pkg;
+  my %sock_opts;
   if( $self->ssl_in_use() )
     {
-    my %ssl_opts = %{ $self->{ 'SSL_OPTS' } };
-    $ssl_opts{ 'SSL_error_trap'  } = sub { shift; $self->on_ssl_error( shift() ); },
-
-    $server_socket = IO::Socket::SSL->new(  
-                                         Proto     => 'tcp',
-                                         LocalPort => $self->{ 'PORT' },
-                                         Listen    => 128,
-                                         ReuseAddr => 1,
-                                         Timeout   => 4,
-
-                                         %ssl_opts,
-                                         );
-
+    my %sock_opts = %{ $self->{ 'SSL_OPTS' } };
+    $sock_opts{ 'SSL_error_trap'  } = sub { shift; $self->on_ssl_error( shift() ); },
+    $sock_pkg = 'IO::Socket::SSL';
     }
   else
     {
-    $server_socket = IO::Socket::INET->new( 
-                                         Proto     => 'tcp',
-                                         LocalPort => $self->{ 'PORT' },
-                                         Listen    => 128,
-                                         ReuseAddr => 1,
-                                         Timeout   => 4,
-                                         );
+    $sock_pkg = 'IO::Socket::INET';
     }
+
+  $server_socket = $sock_pkg->new(  
+                                       Proto     => 'tcp',
+                                       LocalPort => $self->{ 'PORT' },
+                                       Listen    => 128,
+                                       ReuseAddr => 1,
+                                       Blocking  => 0,
+
+                                       %sock_opts,
+                                       );
 
   if( ! $server_socket )
     {
@@ -122,7 +118,7 @@ sub run
     $self->on_listen_ok();
     }
 
-  tie my %SHA, 'IPC::Shareable', { size => 64*1024 };
+  tie my %SHA, 'IPC::Shareable', { size => 1024*1024 };
   $self->{ 'SHA' } = \%SHA;
 
   while(4)
@@ -145,7 +141,7 @@ sub run
   $self->on_server_close( $server_socket );
   close( $server_socket );
 
-  print STDERR Dumper( $self->{ 'STATS' } );
+#print STDERR Dumper( $self->{ 'STATS' } );
 
   return 0;
 }
@@ -276,15 +272,16 @@ sub __run_prefork
         delete $self->{ 'SERVER_SOCKET' };
         $self->im_idle();
 
+        my $kid_idle;
         while(4)
           {
           last if $self->{ 'BREAK_MAIN_LOOP' };
           last unless $self->__run_preforked_child( $server_socket );
-          my $kid_idle = $self->{ 'LPTIME' } > 0 ? time() - $self->{ 'LPTIME' } : - ( time() - $self->{ 'SPTIME' } );
+          $kid_idle = $self->{ 'LPTIME' } > 0 ? time() - $self->{ 'LPTIME' } : - ( time() - $self->{ 'SPTIME' } );
           last if $self->{ 'LPTIME' } > 0 and $kid_idle > 110;
-#print STDERR "----------- prefork child reuse [$$] \n\n";
+#print STDERR "----------- prefork child reuse [$$] kid_idle [$kid_idle]\n\n";
           }
-#print STDERR "----------- prefork child EXIT  [$$] \n";
+#print STDERR "----------- prefork child EXIT  [$$] at kid_idle [$kid_idle]\n";
         $self->on_child_exit();
         exit;  
         # ------- child exits here -------
@@ -292,8 +289,10 @@ sub __run_prefork
 #print STDERR "--ESTIMATE-- $tk = $kk + $prefork_count if $ik < ( 1 + $kk / 10 );\n";    
       }
     
+#tied( %{ $self->{ 'SHA' } } )->unlock();
 #print STDERR "sleeping for 4 secs...........................$self->{ 'KIDS' } / $bk...........\n" . Dumper( $self->{ 'SHA' } );
-    sleep(6);
+#tied( %{ $self->{ 'SHA' } } )->lock();
+    sleep(4);
     }
 }
 
@@ -304,14 +303,11 @@ sub __run_preforked_child
 
   if( ! socket_can_read( $server_socket, 4 ) )
     {
-    #print STDERR "-----ERR------ ACCEPT $$ RES >>> $!\n\n\n";
     $self->on_prefork_child_idle();
     return '0E0';
     }
 
-  my $client_socket = $server_socket->accept();
-  return '0E0' unless $client_socket;
-#print STDERR "-----OK------ ACCEPT $$ RES $client_socket >>> $!\n";
+  my $client_socket = $server_socket->accept() or return '0E0';
 
   binmode( $client_socket );
   $self->{ 'CLIENT_SOCKET' } = $client_socket;
@@ -367,7 +363,10 @@ sub get_busy_kids_count
 {
   my $self = shift;
   
-  return scalar( grep { substr( $_, 0, 1 ) eq  '*' } values %{ $self->{ 'SHA' } } ) || 0;
+  tied( %{ $self->{ 'SHA' } } )->lock();
+  my $busy_count = scalar( grep { substr( $_, 0, 1 ) eq  '*' } values %{ $self->{ 'SHA' } } ) || 0;
+  tied( %{ $self->{ 'SHA' } } )->unlock();
+  return $busy_count;
 }
 
 sub get_parent_pid

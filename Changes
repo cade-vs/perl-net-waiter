@@ -1,5 +1,10 @@
 Revision history for Perl extension Net::Waiter
 
+1.08  2023.10.04
+
+    1. changed accept socket to non-blocking
+    2. expanded shared memory to 1MiB (TODO: should be an option)
+    3. removed extra debug messages
 
 1.07  2023.10.02
 
