@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Time::HiRes qw( sleep );
 
-our $VERSION = '1.08';
+our $VERSION = '1.09';
 
 ##############################################################################
             
@@ -32,6 +32,7 @@ sub new
                PREFORK => $opt{ 'PREFORK' }, # how many preforked processes
                MAXFORK => $opt{ 'MAXFORK' }, # max count of preforked processes
                NOFORK  => $opt{ 'NOFORK'  }, # foreground process
+               TIMEOUT => $opt{ 'TIMEOUT' } || 4, # timeout for accept(), default 4 seconds
     
                SSL     => $opt{ 'SSL'     }, # use SSL
                OPT     => \%opt,
@@ -55,6 +56,10 @@ sub new
     $self->{ 'PREFORK' } = abs( $pf );
     $self->{ 'MAXFORK' } = abs( $pf ) unless $mf > 0;
     }
+
+  # timeout cap
+  $self->{ 'TIMEOUT' } =    1 if $self->{ 'TIMEOUT' } <    1; # avoid busyloop
+  $self->{ 'TIMEOUT' } = 3600 if $self->{ 'TIMEOUT' } > 3600; # 1 hour max should be enough :)
              
   bless $self, $class;
   return $self;
@@ -118,8 +123,8 @@ sub run
     $self->on_listen_ok();
     }
 
-  tie my %SHA, 'IPC::Shareable', { size => 1024*1024 };
-  $self->{ 'SHA' } = \%SHA;
+  $self->{ 'SHAK' } = tie my %SHA, 'IPC::Shareable', { size => 256*1024 }; # shared mem control knot
+  $self->{ 'SHAH' } = \%SHA;                                               # shared memory hash
 
   while(4)
     {
@@ -134,9 +139,12 @@ sub run
       {  
       $self->__run_forking( $server_socket );
       }
+#$self->{ 'SHAK' }->lock();
+#print STDERR "sleeping for 4 secs...........................$self->{ 'KIDS' } / $bk...........\n" . Dumper( $self->{ 'SHAH' } );
+#$self->{ 'SHAK' }->unlock();
     }
 
-  tied( %{ $self->{ 'SHA' } } )->remove();
+  $self->{ 'SHAK' }->remove();
 
   $self->on_server_close( $server_socket );
   close( $server_socket );
@@ -151,12 +159,21 @@ sub __run_forking
   my $self          = shift;
   my $server_socket = shift;
 
-  my $client_socket = $server_socket->accept();
+#print STDERR "----------- ACCEPT: ".scalar(localtime)."\n\n";
+  if( ! socket_can_read( $server_socket, $self->{ 'TIMEOUT' } ) )
+    {
+    $self->on_forking_idle();
+    return '0E0';
+    }
+
+  my $client_socket = $server_socket->accept() or return '0E0';
   if( ! $client_socket )
     {
+#print STDERR "----------- ACCEPT: ERROR $client_socket\n\n";
     $self->on_accept_error();
     return;
     }
+#print STDERR "----------- ACCEPT: OK $client_socket\n\n";
 
   binmode( $client_socket );
   $self->{ 'CLIENT_SOCKET' } = $client_socket;
@@ -289,9 +306,9 @@ sub __run_prefork
 #print STDERR "--ESTIMATE-- $tk = $kk + $prefork_count if $ik < ( 1 + $kk / 10 );\n";    
       }
     
-#tied( %{ $self->{ 'SHA' } } )->unlock();
-#print STDERR "sleeping for 4 secs...........................$self->{ 'KIDS' } / $bk...........\n" . Dumper( $self->{ 'SHA' } );
-#tied( %{ $self->{ 'SHA' } } )->lock();
+#$self->{ 'SHAK' }->lock();
+#print STDERR "sleeping for 4 secs...........................$self->{ 'KIDS' } / $bk...........\n" . Dumper( $self->{ 'SHAH' } );
+#$self->{ 'SHAK' }->unlock();
     sleep(4);
     }
 }
@@ -301,7 +318,7 @@ sub __run_preforked_child
   my $self          = shift;
   my $server_socket = shift;
 
-  if( ! socket_can_read( $server_socket, 4 ) )
+  if( ! socket_can_read( $server_socket, $self->{ 'TIMEOUT' } ) )
     {
     $self->on_prefork_child_idle();
     return '0E0';
@@ -362,11 +379,13 @@ sub get_client_socket
 sub get_busy_kids_count
 {
   my $self = shift;
+  return -1 unless exists $self->{ 'SHAK' };
   
-  tied( %{ $self->{ 'SHA' } } )->lock();
-  my $busy_count = scalar( grep { substr( $_, 0, 1 ) eq  '*' } values %{ $self->{ 'SHA' } } ) || 0;
-  tied( %{ $self->{ 'SHA' } } )->unlock();
-  return $busy_count;
+  $self->{ 'SHAK' }->lock();
+  my $fork_count = scalar( keys %{ $self->{ 'SHAH' } } ) || 0;
+  my $busy_count = scalar( grep { substr( $_, 0, 1 ) eq  '*' } values %{ $self->{ 'SHAH' } } ) || 0;
+  $self->{ 'SHAK' }->unlock();
+  return wantarray ? ( $busy_count, $fork_count ) : $busy_count;
 }
 
 sub get_parent_pid
@@ -398,9 +417,9 @@ sub __im_in_state
   my $ppid = $self->get_parent_pid();
   return 0 if $ppid == $$; # states are available only for kids
 
-  tied( %{ $self->{ 'SHA' } } )->lock();
-  $self->{ 'SHA' }{ $$ } = $state . "/" . $self->{ 'BUSY_COUNT' };
-  tied( %{ $self->{ 'SHA' } } )->unlock();
+  $self->{ 'SHAK' }->lock();
+  $self->{ 'SHAH' }{ $$ } = $state . "/" . $self->{ 'BUSY_COUNT' };
+  $self->{ 'SHAK' }->unlock();
   
   return kill( 'RTMIN', $ppid ) if $state eq '-';
   return kill( 'RTMAX', $ppid ) if $state eq '*';
@@ -437,9 +456,9 @@ sub __sig_child
   my $child_pid;
   while( ( $child_pid = waitpid( -1, WNOHANG ) ) > 0 )
     {
-    tied( %{ $self->{ 'SHA' } } )->lock();
-    delete $self->{ 'SHA' }{ $child_pid };
-    tied( %{ $self->{ 'SHA' } } )->unlock();
+    $self->{ 'SHAK' }->lock();
+    delete $self->{ 'SHAH' }{ $child_pid };
+    $self->{ 'SHAK' }->unlock();
     
     $self->{ 'KIDS' }--;
     delete $self->{ 'KID_PIDS' }{ $child_pid };
@@ -505,6 +524,11 @@ sub on_process
 
 # called on preforked childs, when accept timeouts
 sub on_prefork_child_idle
+{
+}
+
+# called on forking mode parent side, when noone connects in 'TIMEOUT' secods.
+sub on_forking_idle
 {
 }
 
@@ -630,6 +654,7 @@ Creates new Net::Waiter object and sets its options:
    PREFORK =>    8, # how many preforked processes
    MAXFORK =>   32, # max count of preforked processes
    NOFORK  =>    0, # if 1 will not fork, only single client will be accepted
+   TIMEOUT =>    4, # timeout for accepting connections, defaults to 4 seconds
    SSL     =>    1, # use SSL
 
 if PREFORK is negative, the absolute value will be used both for PREFORK and
@@ -675,6 +700,12 @@ Returns server (listening) socket object. Valid in parent only, otherwise return
 
 =head2 get_client_socket()
 
+=head2 get_busy_kids_count()
+
+Returns the count of all forked busy processes (which are already accepted connection).
+In array contect returns two integers: busy process count and all forked processes count.
+This method is accessible from parent and all forked processes and reflect all processes.
+
 Returns client (connected) socket object. Valid in kids only, otherwise returns undef.
 
 =head1 HANDLER FUNCTIONS
@@ -704,6 +735,14 @@ Called when new process is forked. This will be executed inside the server
 
 Called when socket is ready to be used. This is the place where the actual
 work must be done.
+
+=head2 on_prefork_child_idle
+
+Called on preforked childs, when accept timeouts (see 'TIMEOUT' option).
+
+=head2 on_forking_idle
+
+Called on forking mode parent, when accept timeouts (see 'TIMEOUT' option).
 
 =head2 on_maxforked( $client_socket )
 
