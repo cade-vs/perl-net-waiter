@@ -1,5 +1,10 @@
 Revision history for Perl extension Net::Waiter
 
+1.09  2023.11.21
+
+    1. fixed busyloop
+    2. added timeout options
+
 1.08  2023.10.04
 
     1. changed accept socket to non-blocking
