@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Time::HiRes qw( sleep );
 
-our $VERSION = '1.09';
+our $VERSION = '1.10';
 
 ##############################################################################
             
@@ -33,6 +33,8 @@ sub new
                MAXFORK => $opt{ 'MAXFORK' }, # max count of preforked processes
                NOFORK  => $opt{ 'NOFORK'  }, # foreground process
                TIMEOUT => $opt{ 'TIMEOUT' } || 4, # timeout for accept(), default 4 seconds
+               
+               PROP_SIGUSR => $opt{ 'PROP_SIGUSR' },
     
                SSL     => $opt{ 'SSL'     }, # use SSL
                OPT     => \%opt,
@@ -212,19 +214,24 @@ sub __run_forking
       }
     }
   # --------- kid here ---------
+  $self->{ 'CHILD'  } = 1;
   delete $self->{ 'SERVER_SOCKET' };
+  delete $self->{ 'KIDS' };
+  delete $self->{ 'KID_PIDS' };
 
   # reinstall signal handlers in the kid
-  $SIG{ 'INT'  } = 'DEFAULT';
-  $SIG{ 'CHLD' } = 'DEFAULT';
-  $SIG{ 'USR1' } = 'DEFAULT';
-  $SIG{ 'USR2' } = 'DEFAULT';
+  $SIG{ 'INT'   } = 'DEFAULT';
+  $SIG{ 'CHLD'  } = 'DEFAULT';
+  $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
+  $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
+  $SIG{ 'RTMIN' } = 'DEFAULT';
+  $SIG{ 'RTMAX' } = 'DEFAULT';
 
   srand();
 
-  $self->{ 'CHILD' } = 1;
-
   $client_socket->autoflush( 1 );
+  $self->on_child_start();
+
   $self->im_busy();
   $self->on_process( $client_socket );
   $self->on_close( $client_socket );
@@ -287,6 +294,19 @@ sub __run_prefork
         $self->{ 'CHILD'  } = 1;
         $self->{ 'SPTIME' } = time();
         delete $self->{ 'SERVER_SOCKET' };
+        delete $self->{ 'KIDS' };
+        delete $self->{ 'KID_PIDS' };
+
+        # reinstall signal handlers in the kid
+        $SIG{ 'INT'   } = 'DEFAULT';
+        $SIG{ 'CHLD'  } = 'DEFAULT';
+        $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
+        $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
+        $SIG{ 'RTMIN' } = 'DEFAULT';
+        $SIG{ 'RTMAX' } = 'DEFAULT';
+        
+        $self->on_child_start();
+        
         $self->im_idle();
 
         my $kid_idle;
@@ -335,14 +355,6 @@ sub __run_preforked_child
   my $sockport = $client_socket->sockport();
 
   $self->on_accept_ok( $client_socket );
-
-  # reinstall signal handlers in the kid
-  $SIG{ 'INT'   } = 'DEFAULT';
-  $SIG{ 'CHLD'  } = 'DEFAULT';
-  $SIG{ 'USR1'  } = 'DEFAULT';
-  $SIG{ 'USR2'  } = 'DEFAULT';
-  $SIG{ 'RTMIN' } = 'DEFAULT';
-  $SIG{ 'RTMAX' } = 'DEFAULT';
 
   srand();
 
@@ -393,6 +405,15 @@ sub get_parent_pid
   my $self = shift;
   
   return $self->{ 'PARENT_PID' };
+}
+
+sub get_kid_pids
+{
+  my $self = shift;
+
+  return () if $self->is_child();
+  
+  return keys %{ $self->{ 'KID_PIDS' } || {} };
 }
 
 sub im_busy
@@ -449,6 +470,17 @@ sub is_child
   return $self->{ 'CHILD' };
 }
 
+sub propagate_signal
+{
+  my $self = shift;
+  my $sig  = shift;
+  
+  for my $kpid ( $self->get_kid_pids() )
+    {
+    kill( $sig, $kpid );
+    }
+}
+
 sub __sig_child
 {
   my $self = shift;
@@ -472,6 +504,7 @@ sub __sig_usr1
   my $self = shift;
 
   $self->on_sig_usr1();
+  $self->propagate_signal( 'USR1' ) if $self->{ 'PROP_SIGUSR' };
   $SIG{ 'USR1' } = sub { $self->__sig_usr1();  };
 }
 
@@ -480,10 +513,26 @@ sub __sig_usr2
   my $self = shift;
 
   $self->on_sig_usr2();
+  $self->propagate_signal( 'USR2' ) if $self->{ 'PROP_SIGUSR' };
   $SIG{ 'USR2' } = sub { $self->__sig_usr2();  };
 }
 
-use Data::Dumper;
+sub __child_sig_usr1
+{
+  my $self = shift;
+
+  $self->on_child_sig_usr1();
+  $SIG{ 'USR1' } = sub { $self->__child_sig_usr1();  };
+}
+
+sub __child_sig_usr2
+{
+  my $self = shift;
+
+  $self->on_child_sig_usr2();
+  $SIG{ 'USR2' } = sub { $self->__child_sig_usr2();  };
+}
+
 
 sub __sig_kid_idle
 {
@@ -536,6 +585,11 @@ sub on_maxforked
 {
 }
 
+# called right after fork, in the forked child, after initial setup but just before processing start
+sub on_child_start
+{
+}
+
 # called just before forked or preforked child exits
 sub on_child_exit
 {
@@ -570,6 +624,14 @@ sub on_sig_kid_idle
 }
 
 sub on_sig_kid_busy
+{
+}
+
+sub on_child_sig_usr1
+{
+}
+
+sub on_child_sig_usr2
 {
 }
 
@@ -657,6 +719,8 @@ Creates new Net::Waiter object and sets its options:
    TIMEOUT =>    4, # timeout for accepting connections, defaults to 4 seconds
    SSL     =>    1, # use SSL
 
+   PROP_SIGUSR => 1, # if true, will propagate USR1/USR2 signals to childs
+
 if PREFORK is negative, the absolute value will be used both for PREFORK and
 MAXFORK counts.
 
@@ -700,6 +764,8 @@ Returns server (listening) socket object. Valid in parent only, otherwise return
 
 =head2 get_client_socket()
 
+Returns connected client socket.
+
 =head2 get_busy_kids_count()
 
 Returns the count of all forked busy processes (which are already accepted connection).
@@ -707,6 +773,14 @@ In array contect returns two integers: busy process count and all forked process
 This method is accessible from parent and all forked processes and reflect all processes.
 
 Returns client (connected) socket object. Valid in kids only, otherwise returns undef.
+
+=head2 get_kid_pids()
+
+Returns list of forked child pids. Available only in parent processes.
+
+=head2 propagate_signal( 'SIGNAME' )
+
+Sends signal 'SIGNAME' to all child processes.
 
 =head1 HANDLER FUNCTIONS
 
@@ -754,6 +828,10 @@ note: this handler is only used for FORKING server. preforked servers will
 not accept the socket at all if MAXFORK has been reached. the reason is that
 forking server may release child process during the accept() call.
 
+=head2 on_child_start()
+
+Called right after fork, in the forked child, after initial setup but just before processing start.
+
 =head2 on_child_exit()
 
 Called inside a child, just before forked or preforked child exits.
@@ -779,13 +857,19 @@ process and gets child pid as 1st argument.
 
 =head2 on_sig_usr1()
 
-Called when server or forked (child) process receives USR1 signal.
-(is_child() can be used here)
+Called when server process receives USR1 signal.
 
 =head2 on_sig_usr2()
 
-Called when server or forked (child) process receives USR2 signal.
-(is_child() can be used here)
+Called when server process receives USR2 signal.
+                                                                                        
+=head2 on_child_sig_usr1()
+
+Called when forked (child) process receives USR1 signal.
+
+=head2 on_child_sig_usr2()
+
+Called whenforked (child) process receives USR2 signal.
                                                                                         
 =head1 TODO
 
