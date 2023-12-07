@@ -6,6 +6,7 @@ use Data::Dumper;
 
 sub dump_args
 {
+return;
   my ( $package, $filename, $line, $subroutine ) = caller( 1 );
   my @args = @_;
   shift( @args );
@@ -41,6 +42,7 @@ sub on_process
   dump_args( @_ );
 
   print $sock "HTTP/1.0 200 OK\n\nhello world\n";
+  sleep rand 3;
 }
 
 sub on_close
