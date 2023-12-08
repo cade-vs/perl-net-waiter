@@ -84,6 +84,7 @@ sub run
     };
 
   $SIG{ 'INT'   } = sub { $self->break_main_loop(); };
+  $SIG{ 'TERM'  } = sub { $self->break_main_loop(); };
   $SIG{ 'CHLD'  } = sub { $self->__sig_child();     };
   $SIG{ 'USR1'  } = sub { $self->__sig_usr1();      };
   $SIG{ 'USR2'  } = sub { $self->__sig_usr2();      };
@@ -128,6 +129,9 @@ sub run
     }
 
   $self->{ 'SHA' } = new IPC::Shareable size => 128*1024, mode => 0600, create => 1 or die "fatal: cannot create shared memory segment\n";
+
+my $semid = tied( %{ $self->{ 'SHA' } } )->sem()->id();
+print STDERR "semaphore id = $semid\n";
 
   while(4)
     {
