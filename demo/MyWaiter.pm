@@ -75,4 +75,9 @@ sub on_sig_usr2
   dump_args( @_ );
 }
 
+sub on_child_exit
+{
+  print "child grace exit\n";
+}
+
 1;

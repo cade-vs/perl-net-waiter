@@ -182,6 +182,8 @@ sub run
       }
     }
 
+  $self->propagate_signal( 'TERM' );
+
   tied( %{ $self->{ 'SHA' } } )->remove();
   delete $self->{ 'SHA' };
 
@@ -258,7 +260,8 @@ sub __run_forking
   delete $self->{ 'KID_PIDS' };
 
   # reinstall signal handlers in the kid
-  $SIG{ 'INT'   } = 'DEFAULT';
+  $SIG{ 'INT'   } = sub { $self->break_main_loop(); };
+  $SIG{ 'TERM'  } = sub { $self->break_main_loop(); };
   $SIG{ 'CHLD'  } = 'DEFAULT';
   $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
   $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
