@@ -130,7 +130,7 @@ sub run
 
   $self->{ 'SHA' } = new IPC::Shareable size => 128*1024, mode => 0600, create => 1 or die "fatal: cannot create shared memory segment\n";
 
-  print STDERR "shared memory semaphore id = ".tied( %{ $self->{ 'SHA' } } )->sem()->id()."\n" if $self->{ 'DEBUG' };
+#  print STDERR "shared memory semaphore id = ".tied( %{ $self->{ 'SHA' } } )->sem()->id()."\n" if $self->{ 'DEBUG' };
 
   while(4)
     {
@@ -169,7 +169,7 @@ sub run
       my $tf = $self->{ 'FORKS' };
       my $kk = $self->{ 'KIDS'  };
       my $bk = $self->{ 'KIDS_BUSY' };
-      print STDERR "$$ sleeping for 4 secs..... total forks: $tf, kids: $kk, busy: $bk ...........\n" . Data::Dumper::Dumper( $self->{ 'SHA' } );
+#      print STDERR "$$ sleeping for 4 secs..... total forks: $tf, kids: $kk, busy: $bk ...........\n" . Data::Dumper::Dumper( $self->{ 'SHA' } );
       }
 
     $self->__sha_unlock( 'MASTER STATS UPDATE' );
@@ -411,12 +411,14 @@ sub __run_preforked_child
 }
 
 ##############################################################################
-use Data::Tools;
+
+#use Data::Tools;
 sub __sha_lock_ro
 {
   my $self = shift;
 
-  while(4)
+  my $c = 32;
+  while( $c-- )
     {
     my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_SH );
     return $rc if $rc;
@@ -427,7 +429,8 @@ sub __sha_lock_rw
 {
   my $self = shift;
   
-  while(4)
+  my $c = 32;
+  while( $c-- )
     {
     my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_EX );
     return $rc if $rc;
@@ -438,7 +441,8 @@ sub __sha_unlock
 {
   my $self = shift;
   
-  while(4)
+  my $c = 32;
+  while( $c-- )
     {
     my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_UN );
     return $rc if $rc;
