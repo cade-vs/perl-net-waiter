@@ -423,6 +423,7 @@ sub __sha_lock_ro
     my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_SH );
     return $rc if $rc;
     }
+  return undef;  
 }
 
 sub __sha_lock_rw
@@ -435,6 +436,7 @@ sub __sha_lock_rw
     my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_EX );
     return $rc if $rc;
     }
+  return undef;  
 }
 
 sub __sha_unlock
@@ -447,6 +449,7 @@ sub __sha_unlock
     my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_UN );
     return $rc if $rc;
     }
+  return undef;  
 }
 
 ##############################################################################
