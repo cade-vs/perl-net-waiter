@@ -1,14 +1,12 @@
-
-
 # NAME
 
-    Net::Waiter concise INET socket server
+    Net::Waiter compact INET socket server
 
 # SYNOPSIS
 
     package MyWaiter;
     use strict;
-    use base qw( Net::Waiter );
+    use parent qw( Net::Waiter );
 
     sub on_accept_ok
     {
@@ -34,9 +32,10 @@
     my $server = MyWaiter->new( PORT => 9123 );
     my $res = $server->run();
     print "waiter result: $res\n"; # 0 is ok, >0 is error
-    
 
+# DESCRIPTION
 
+Net::Waiter is a base class which implements compact INET network socket server.  
 
 # METHODS/FUNCTIONS
 
@@ -45,9 +44,16 @@
 Creates new Net::Waiter object and sets its options:
 
     PORT    => 9123, # which port to listen on
-    PREFORK => 0,    # how many preforked processes, TODO
-    NOFORK  => 0,    # if 1 will not fork, only single client will be accepted
-    SSL     => 1,    # use SSL
+    PREFORK =>    8, # how many preforked processes
+    MAXFORK =>   32, # max count of preforked processes
+    NOFORK  =>    0, # if 1 will not fork, only single client will be accepted
+    TIMEOUT =>    4, # timeout for accepting connections, defaults to 4 seconds
+    SSL     =>    1, # use SSL
+
+    PROP_SIGUSR => 1, # if true, will propagate USR1/USR2 signals to childs
+
+if PREFORK is negative, the absolute value will be used both for PREFORK and
+MAXFORK counts.
 
 if SSL is enabled then additional IO::Socket::SSL options can be added:
 
@@ -56,7 +62,6 @@ if SSL is enabled then additional IO::Socket::SSL options can be added:
     SSL_ca_file   => 'ca.pem',
 
 for further details, check IO::Socket::SSL docs.   
-   
 
 ## run()
 
@@ -71,10 +76,10 @@ Run returns exit code:
 
 ## break\_main\_loop()
 
-Breaks main server loop. Calling break\_main\_loop() is possible from any handler
-function (see HANDLER FUNCTIONS below) but it will not break the main loop 
-immediately. It will just rise flag which will stop when control is returned to
-the next server loop.
+Breaks main server loop. Calling break\_main\_loop() is possible from parent 
+server process handler functions (see HANDLER FUNCTIONS below) but it will 
+not break the main loop immediately. It will just rise flag which will stop 
+when control is returned to the next server loop.
 
 ## ssl\_in\_use()
 
@@ -84,7 +89,35 @@ Returns true (1) if current setup uses SSL (useful mostly inside handlers).
 
 Returns true (1) if this process is client/child process (useful mostly inside handlers).
 
+## get\_server\_socket()
+
+Returns server (listening) socket object. Valid in parent only, otherwise returns undef.
+
+## get\_client\_socket()
+
+Returns connected client socket.
+
+## get\_busy\_kids\_count()
+
+Returns the count of all forked busy processes (which are already accepted connection).
+In array contect returns two integers: busy process count and all forked processes count.
+This method is accessible from parent and all forked processes and reflect all processes.
+
+Returns client (connected) socket object. Valid in kids only, otherwise returns undef.
+
+## get\_kid\_pids()
+
+Returns list of forked child pids. Available only in parent processes.
+
+## propagate\_signal( 'SIGNAME' )
+
+Sends signal 'SIGNAME' to all child processes.
+
 # HANDLER FUNCTIONS
+
+All of the following methods are empty in the base implementation and are
+expected to be reimplemented. The list order below is chronological but the
+most important function which must be reimplemented is on\_process().
 
 ## on\_listen\_ok()
 
@@ -108,9 +141,36 @@ Called when new process is forked. This will be executed inside the server
 Called when socket is ready to be used. This is the place where the actual
 work must be done.
 
+## on\_prefork\_child\_idle
+
+Called on preforked childs, when accept timeouts (see 'TIMEOUT' option).
+
+## on\_forking\_idle
+
+Called on forking mode parent, when accept timeouts (see 'TIMEOUT' option).
+
+## on\_maxforked( $client\_socket )
+
+Called if client socket is accepted but MAXFORK count reached. This can be
+used to advise the situation over the socket and will be called right before
+client socket close.
+
+note: this handler is only used for FORKING server. preforked servers will
+not accept the socket at all if MAXFORK has been reached. the reason is that
+forking server may release child process during the accept() call.
+
+## on\_child\_start()
+
+Called right after fork, in the forked child, after initial setup but just before processing start.
+
+## on\_child\_exit()
+
+Called inside a child, just before forked or preforked child exits.
+
 ## on\_close( $client\_socket )
 
 Called right before client socket will be closed. And after on\_process().
+Will be called and when MAXFORK has been reached also.
 
 ## on\_server\_close()
 
@@ -128,14 +188,24 @@ process and gets child pid as 1st argument.
 
 ## on\_sig\_usr1()
 
-Called when server or forked (child) process receives USR1 signal.
-(is\_child() can be used here)
+Called when server process receives USR1 signal.
 
 ## on\_sig\_usr2()
 
-Called when server or forked (child) process receives USR2 signal.
-(is\_child() can be used here)
-                                                                                        
+Called when server process receives USR2 signal.
+
+## on\_child\_sig\_usr1()
+
+Called when forked (child) process receives USR1 signal.
+
+## on\_child\_sig\_usr2()
+
+Called when forked (child) process receives USR2 signal.
+
+# NOTES
+
+SIG\_CHLD handler defaults to IGNORE in child processes. 
+whoever forks further here, should reinstall signal handler if needed. 
 
 # TODO
 
