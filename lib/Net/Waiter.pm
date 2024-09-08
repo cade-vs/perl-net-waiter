@@ -1,7 +1,7 @@
 ##############################################################################
 #
 #  Net::Waiter concise INET socket server
-#  (c) Vladi Belperchinov-Shabanski "Cade" 2015-2023
+#  (c) Vladi Belperchinov-Shabanski "Cade" 2015-2024
 #  http://cade.noxrun.com
 #        <cade@noxrun.com> <cade@bis.bg> <cade@cpan.org>
 #
@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Time::HiRes qw( sleep );
 
-our $VERSION = '1.13';
+our $VERSION = '1.14';
 
 ##############################################################################
             
@@ -86,7 +86,7 @@ sub run
   $SIG{ 'INT'   } = sub { $self->break_main_loop(); };
   $SIG{ 'TERM'  } = sub { $self->break_main_loop(); };
   $SIG{ 'CHLD'  } = sub { $self->__sig_child();     };
-  $SIG{ 'HUP '  } = sub { $self->__sig_hup();       };
+  $SIG{ 'HUP'   } = sub { $self->__sig_hup();       };
   $SIG{ 'USR1'  } = sub { $self->__sig_usr1();      };
   $SIG{ 'USR2'  } = sub { $self->__sig_usr2();      };
   $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
@@ -129,7 +129,10 @@ sub run
     $self->on_listen_ok();
     }
 
-  $self->{ 'SHA' } = new IPC::Shareable size => 128*1024, mode => 0600, create => 1 or die "fatal: cannot create shared memory segment\n";
+
+  my $tm = time();
+  my $sha_key = $self->{ 'SHA_KEY' } = "$0.$$.$tm";
+  $self->{ 'SHA' } = new IPC::Shareable key => $sha_key, size => 256*1024, mode => 0600, create => 1 or die "fatal: cannot create shared memory segment\n";
 
 #  print STDERR "shared memory semaphore id = ".tied( %{ $self->{ 'SHA' } } )->sem()->id()."\n" if $self->{ 'DEBUG' };
 
@@ -150,18 +153,26 @@ sub run
 
     $self->__sha_lock_ro( 'MASTER STATS UPDATE' );
 
-    # get stopped processes pids
-    my @sig_childs = keys %{ $self->{ 'SIG_CHILD' } };
-    $self->{ 'SIG_CHILD' } = {};
+print STDERR "$$ --------------->>>>>>>>>>>\n" . Dumper($self->{ 'SHA' });
 
-    # remove from shared stats
-    if( @sig_childs )
+    $self->{ 'KIDS_BUSY'   } = 0;
+    for my $cpid ( keys %{ $self->{ 'SHA' }{ 'PIDS' } } )
       {
-      $self->__sha_lock_rw( 'MASTER STATS UPDATE: DISCARD PIDS' );
-      delete $self->{ 'SHA' }{ $_ } for @sig_childs;
+      next unless $cpid > 0;
+      if( ! exists $self->{ 'KID_PIDS' }{ $cpid } )
+        {
+        delete $self->{ 'SHA' }{ 'PIDS' }{ $cpid };
+        }
+      else
+        {
+        my $v = $self->{ 'SHA' }{ 'PIDS' }{ $cpid };
+        my ( $b, $c ) = split /:/, $v;
+        $self->{ 'KIDS_BUSY'  }++ if $b eq '*';
+        }  
       }
+    $self->{ 'STAT' }{ 'BUSY_COUNT' } = $self->{ 'SHA' }{ 'STAT' }{ 'BUSY_COUNT' };
 
-    $self->{ 'KIDS_BUSY'  } = scalar( grep { substr( $_, 0, 1 ) eq  '*' } values %{ $self->{ 'SHA' } } ) || 0;
+    $self->__sha_unlock( 'MASTER STATS UPDATE' );
 
     if( $self->{ 'DEBUG' } )
       {
@@ -170,17 +181,8 @@ sub run
       my $tf = $self->{ 'FORKS' };
       my $kk = $self->{ 'KIDS'  };
       my $bk = $self->{ 'KIDS_BUSY' };
-#      print STDERR "$$ sleeping for 4 secs..... total forks: $tf, kids: $kk, busy: $bk ...........\n" . Data::Dumper::Dumper( $self->{ 'SHA' } );
       }
 
-    $self->__sha_unlock( 'MASTER STATS UPDATE' );
-
-    for my $cpid ( @sig_childs )
-      {
-      $self->{ 'KIDS' }--;
-      delete $self->{ 'KID_PIDS' }{ $cpid };
-      $self->on_sig_child( $cpid );
-      }
     }
 
   $self->propagate_signal( 'TERM' );
@@ -191,7 +193,16 @@ sub run
   $self->on_server_close( $server_socket );
   close( $server_socket );
 
-#print STDERR Dumper( $self->{ 'STATS' } );
+
+
+
+use Data::Dumper;
+print STDERR Dumper( $self->{ 'STATS' } );
+for my $k ( sort { $self->{ 'STATS' }{ 'IDLE_FREQ' }{ $a } <=> $self->{ 'STATS' }{ 'IDLE_FREQ' }{ $b } } keys %{ $self->{ 'STATS' }{ 'IDLE_FREQ' } } )
+  {
+  my $v = $self->{ 'STAT' }{ 'IDLE_FREQ' }{ $k };
+  print STDERR "$k idle => $v times\n";
+  }
 
   return 0;
 }
@@ -264,13 +275,16 @@ sub __run_forking
   $SIG{ 'INT'   } = sub { $self->break_main_loop(); };
   $SIG{ 'TERM'  } = sub { $self->break_main_loop(); };
   $SIG{ 'CHLD'  } = 'IGNORE';
-  $SIG{ 'HUP '  } = sub { $self->__child_sig_hup();   };
+  $SIG{ 'HUP'   } = sub { $self->__child_sig_hup();   };
   $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
   $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
-  $SIG{ 'RTMIN' } = 'DEFAULT';
-  $SIG{ 'RTMAX' } = 'DEFAULT';
+  $SIG{ 'RTMIN' } = 'IGNORE';
+  $SIG{ 'RTMAX' } = 'IGNORE';
 
   srand();
+
+  my $sha_key = $self->{ 'SHA_KEY' };
+  $self->{ 'SHA' } = new IPC::Shareable key => $sha_key or die "fatal: cannot attach shared memory segment\n";
 
   $client_socket->autoflush( 1 );
   $self->on_child_start();
@@ -289,6 +303,7 @@ sub __run_forking
   # ------- child exits here -------
 }
 
+my $next_stat;
 sub __run_prefork
 {
   my $self          = shift;
@@ -300,21 +315,27 @@ sub __run_prefork
 #    {
 #    last if $self->{ 'BREAK_MAIN_LOOP' };
  
-    my $kk = $self->{ 'KIDS' }; # kids k'ount ;)
-    my $bk = $self->get_busy_kids_count();
-    my $ik = $kk - $bk; # idle kids count
+    my $kk = $self->{ 'KIDS' };             # kids k'ount ;)
+    my $bk = $self->get_busy_kids_count();  # busy count
+    my $ik = $kk - $bk;                     # idle kids count
 
-    $self->{ 'STATS' }{ 'IDLE FREQ' }{ $ik }++ if $bk > 0;
-   
     my $tk = $prefork_count;
-    #$tk = $kk + $prefork_count / 2 if $kk > $prefork_count and $ik < ( 1 + $prefork_count / 10 );
-    $tk = $kk + $prefork_count if $ik < ( 1 + $kk / 10 );
+      #$tk = $kk + $prefork_count / 2 if $kk > $prefork_count and $ik < ( 1 + $prefork_count / 10 );
+       $tk = $kk + $prefork_count if $ik <= ( 1 + $kk / 10 );
 
     my $mf = $self->{ 'MAXFORK' };
     $tk = $mf if $mf > 0 and $tk > $mf; # MAXFORK cap
 
-#print STDERR "++++++++++++++++++++++++++ kids $kk, busy $bk, idle $ik, to fork $tk ++++++++++++++++++\n";
-    
+    if( time() > $next_stat and $bk > 0 )
+      {
+      my $bc = $self->{ 'STAT' }{ 'BUSY_COUNT' };
+print STDERR ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> STAT: TOTAL_BUSY_COUNT=$bc\n";
+      $self->{ 'STAT' }{ 'IDLE_FREQ' }{ int( $ik / 5 ) * 5 }++;
+      $next_stat = time() + 4;
+      }
+    print STDERR "STAT: KIDS: $kk   BUSY: $bk   IDLE: $ik   TOFORK: $tk   WILLFORK?: $self->{ 'KIDS' } < $tk\n" . Dumper( $self->{ 'STAT' } ) if $self->{ 'DEBUG' };
+#print STDERR Dumper( $self->{ 'KID_PIDS' }, $self->{ 'SHA' } );
+
     #while( $self->{ 'KIDS' } < $prefork_count || ( $ik < ( 1 + $prefork_count / 10 ) and $self->{ 'KIDS' } < $kk + $prefork_count / 2 ) )
     while( $self->{ 'KIDS' } < $tk )
       {
@@ -330,7 +351,7 @@ sub __run_prefork
         $self->{ 'KIDS'  }++;
         $self->{ 'KID_PIDS' }{ $pid } = 1;
         $self->on_fork_ok( $pid );
-        $self->{ 'STATS' }{ 'SPAWNS' }++;
+        $self->{ 'STAT' }{ 'SPAWNS' }++;
         }
       else
         {
@@ -342,13 +363,14 @@ sub __run_prefork
         delete $self->{ 'KID_PIDS' };
 
         # reinstall signal handlers in the kid
-        $SIG{ 'INT'   } = 'DEFAULT';
+        $SIG{ 'INT'   } = sub { $self->break_main_loop(); };
+        $SIG{ 'TERM'  } = sub { $self->break_main_loop(); };
         $SIG{ 'CHLD'  } = 'IGNORE';
-        $SIG{ 'HUP '  } = sub { $self->__child_sig_hup();   };
+        $SIG{ 'HUP'   } = sub { $self->__child_sig_hup();   };
         $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
         $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
-        $SIG{ 'RTMIN' } = 'DEFAULT';
-        $SIG{ 'RTMAX' } = 'DEFAULT';
+        $SIG{ 'RTMIN' } = 'IGNORE';
+        $SIG{ 'RTMAX' } = 'IGNORE';
         
         $self->on_child_start();
         
@@ -360,15 +382,20 @@ sub __run_prefork
           last if $self->{ 'BREAK_MAIN_LOOP' };
           last unless $self->__run_preforked_child( $server_socket );
           $kid_idle = $self->{ 'LPTIME' } > 0 ? time() - $self->{ 'LPTIME' } : - ( time() - $self->{ 'SPTIME' } );
-          last if $self->{ 'LPTIME' } > 0 and $kid_idle > 31;
-#print STDERR "----------- prefork child reuse [$$] kid_idle [$kid_idle]\n\n";
+          last if $self->{ 'LPTIME' } > 0 and $kid_idle > 11;
+
+          my $tt = $0;
+          $tt =~ s/ \[-?\d+\]//;
+          $0 = $tt . " [$kid_idle]";
+
+#print STDERR "----------- prefork child reuse [$$] kid_idle [$kid_idle]\n";
           }
-#print STDERR "----------- prefork child EXIT  [$$] at kid_idle [$kid_idle]\n";
+#print STDERR "----------- prefork child EXIT  [$$] at kid_idle [$kid_idle] -- $self->{ 'LPTIME' } > 0 and $kid_idle > 31\n";
         $self->on_child_exit();
         exit;  
         # ------- child exits here -------
         }  
-#print STDERR "--ESTIMATE-- $tk = $kk + $prefork_count if $ik < ( 1 + $kk / 10 );\n";    
+#print STDERR "--ESTIMATE-- tk:$tk = kk:$kk + prefork:$prefork_count if idle:$ik < ( 1 + kk:$kk / 10 );\n";    
       }
     
 #    }
@@ -379,13 +406,17 @@ sub __run_preforked_child
   my $self          = shift;
   my $server_socket = shift;
 
+#print STDERR "-- $$ ---------------await accept\n";
   if( ! socket_can_read( $server_socket, $self->{ 'TIMEOUT' } ) )
     {
+#print STDERR "-- $$ ---------------await TIMEOUT\n";
     $self->on_prefork_child_idle();
     return '0E0';
     }
 
+#print STDERR "-- $$ ---------------pre accept\n";
   my $client_socket = $server_socket->accept() or return '0E0';
+#print STDERR "-- $$ ---------------accepted: $client_socket\n";
 
   binmode( $client_socket );
   $self->{ 'CLIENT_SOCKET' } = $client_socket;
@@ -420,12 +451,16 @@ sub __sha_lock_ro
 {
   my $self = shift;
 
-  my $c = 32;
+  my $c = 3200;
+  my $rc;
   while( $c-- )
     {
-    my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_SH );
+    $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_EX );
+    next if ! $rc and ( $!{EINTR} or  $!{EAGAIN} );
+#    print STDERR "RO lock c $c, rc $rc $!\n";
     return $rc if $rc;
     }
+print STDERR "cannot obtain RO lock for SHA! [$rc] $!\n";
   return undef;  
 }
 
@@ -433,12 +468,16 @@ sub __sha_lock_rw
 {
   my $self = shift;
   
-  my $c = 32;
+  my $c = 3200;
+  my $rc;
   while( $c-- )
     {
-    my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_EX );
+    $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_EX );
+    next if ! $rc and ( $!{EINTR} or  $!{EAGAIN} );
+#    print STDERR "RO lock c $c, rc $rc $!\n";
     return $rc if $rc;
     }
+print STDERR "cannot obtain RW lock for SHA! [$rc] $!\n";
   return undef;  
 }
 
@@ -446,12 +485,16 @@ sub __sha_unlock
 {
   my $self = shift;
   
-  my $c = 32;
+  my $c = 3200;
+  my $rc;
   while( $c-- )
     {
-    my $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_UN );
+    $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_UN );
+    next if ! $rc and ( $!{EINTR} or  $!{EAGAIN} );
+#    print STDERR "RO lock c $c, rc $rc $!\n";
     return $rc if $rc;
     }
+print STDERR "cannot release lock for SHA! [$rc] $!\n";
   return undef;  
 }
 
@@ -524,11 +567,17 @@ sub __im_in_state
   return 0 if $ppid == $$; # states are available only for kids
 
   $self->__sha_lock_rw( 'KID STATE' );
-  $self->{ 'SHA' }{ $$ } = $state . "/" . $self->{ 'BUSY_COUNT' };
+  $self->{ 'SHA' }{ 'PIDS' }{ $$ } = $state . ":" . $self->{ 'BUSY_COUNT' };
+  $self->{ 'SHA' }{ 'STAT' }{ 'BUSY_COUNT' }++ if $state eq '*';
   $self->__sha_unlock( 'KID STATE' );
+
+  my $tt = $0;
+  $tt =~ s/ \| .+//;
+  $0 = $tt . ' | ' . $self->{ 'SHA' }{ 'PIDS' }{ $$ };
   
-  return kill( 'RTMIN', $ppid ) if $state eq '-';
-  return kill( 'RTMAX', $ppid ) if $state eq '*';
+#  return kill( 'RTMIN', $ppid ) if $state eq '-';
+#  return kill( 'RTMAX', $ppid ) if $state eq '*';
+  return kill( 'USR2', $ppid );
   return 0;
 }
 
@@ -570,10 +619,11 @@ sub __sig_child
 {
   my $self = shift;
 
-  my $child_pid;
-  while( ( $child_pid = waitpid( -1, WNOHANG ) ) > 0 )
+  while( ( my $cpid = waitpid( -1, WNOHANG ) ) > 0 )
     {
-    $self->{ 'SIG_CHILD' }{ $child_pid }++;
+    $self->{ 'KIDS' }--;
+    delete $self->{ 'KID_PIDS' }{ $cpid };
+    $self->on_sig_child( $cpid );
     }
   $SIG{ 'CHLD' } = sub { $self->__sig_child(); };
 }
@@ -628,18 +678,21 @@ sub __child_sig_usr2
   $SIG{ 'USR2' } = sub { $self->__child_sig_usr2();  };
 }
 
+
+# used only for waking up preforked servers main loop sleep
 sub __sig_kid_idle
 {
   my $self = shift;
 
-  $self->on_sig_kid_idle();
+  $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
 }
 
+# used only for waking up preforked servers main loop sleep
 sub __sig_kid_busy
 {
   my $self = shift;
 
-  $self->on_sig_kid_busy();
+  $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
 }
 
 ##############################################################################
@@ -714,14 +767,6 @@ sub on_sig_usr1
 }
 
 sub on_sig_usr2
-{
-}
-
-sub on_sig_kid_idle
-{
-}
-
-sub on_sig_kid_busy
 {
 }
 

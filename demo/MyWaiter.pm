@@ -41,8 +41,11 @@ sub on_process
   my $sock = $_[1];
   dump_args( @_ );
 
-  print $sock "HTTP/1.0 200 OK\n\nhello world\n";
-  sleep rand 3;
+  my $body = "hello world\n";
+  my $clen = length $body;
+  sleep 1;
+  print $sock "HTTP/1.0 200 OK\ncontent-type: text/plain\ncontent-length: $clen\n\n$body";
+  #return sleep rand 3;
 }
 
 sub on_close
@@ -77,7 +80,12 @@ sub on_sig_usr2
 
 sub on_child_exit
 {
-  print "child grace exit\n";
+  print "child grace exit [$$]\n";
+}
+
+sub on_prefork_child_idle
+{
+  print "child idle [$$]\n";
 }
 
 1;
