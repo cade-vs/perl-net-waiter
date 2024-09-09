@@ -15,9 +15,13 @@ use IO::Socket::INET;
 use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Time::HiRes qw( sleep );
+use Data::Dumper;
+use Errno;
 
 our $VERSION = '1.14';
 
+$Data::Dumper::Terse = 1;
+ 
 ##############################################################################
             
 sub new
@@ -33,6 +37,8 @@ sub new
                MAXFORK => $opt{ 'MAXFORK' } || 1024, # max count of forked processes
                NOFORK  => $opt{ 'NOFORK'  },         # foreground process
                TIMEOUT => $opt{ 'TIMEOUT' } || 4,    # timeout for accept(), default 4 seconds
+
+               PX_IDLE => $opt{ 'PX_IDLE' } || 31,   # process exit idle, used in preforked processes
                
                PROP_SIGUSR => $opt{ 'PROP_SIGUSR' },
 
@@ -64,6 +70,8 @@ sub new
   # timeout cap
   $self->{ 'TIMEOUT' } =    1 if $self->{ 'TIMEOUT' } <    1; # avoid busyloop
   $self->{ 'TIMEOUT' } = 3600 if $self->{ 'TIMEOUT' } > 3600; # 1 hour max should be enough :)
+
+  $self->{ 'PX_IDLE' } = 31 if $self->{ 'PX_IDLE' } < 1;
              
   bless $self, $class;
   return $self;
@@ -153,8 +161,6 @@ sub run
 
     $self->__sha_lock_ro( 'MASTER STATS UPDATE' );
 
-print STDERR "$$ --------------->>>>>>>>>>>\n" . Dumper($self->{ 'SHA' });
-
     $self->{ 'KIDS_BUSY'   } = 0;
     for my $cpid ( keys %{ $self->{ 'SHA' }{ 'PIDS' } } )
       {
@@ -193,16 +199,11 @@ print STDERR "$$ --------------->>>>>>>>>>>\n" . Dumper($self->{ 'SHA' });
   $self->on_server_close( $server_socket );
   close( $server_socket );
 
-
-
-
-use Data::Dumper;
-print STDERR Dumper( $self->{ 'STATS' } );
-for my $k ( sort { $self->{ 'STATS' }{ 'IDLE_FREQ' }{ $a } <=> $self->{ 'STATS' }{ 'IDLE_FREQ' }{ $b } } keys %{ $self->{ 'STATS' }{ 'IDLE_FREQ' } } )
-  {
-  my $v = $self->{ 'STAT' }{ 'IDLE_FREQ' }{ $k };
-  print STDERR "$k idle => $v times\n";
-  }
+  for my $k ( sort { $self->{ 'STAT' }{ 'IDLE_FREQ' }{ $a } <=> $self->{ 'STAT' }{ 'IDLE_FREQ' }{ $b } } keys %{ $self->{ 'STAT' }{ 'IDLE_FREQ' } } )
+    {
+    my $v = $self->{ 'STAT' }{ 'IDLE_FREQ' }{ $k };
+    print STDERR "$k idle => $v times\n";
+    }
 
   return 0;
 }
@@ -278,8 +279,8 @@ sub __run_forking
   $SIG{ 'HUP'   } = sub { $self->__child_sig_hup();   };
   $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
   $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
-  $SIG{ 'RTMIN' } = 'IGNORE';
-  $SIG{ 'RTMAX' } = 'IGNORE';
+  $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
+  $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
 
   srand();
 
@@ -303,7 +304,7 @@ sub __run_forking
   # ------- child exits here -------
 }
 
-my $next_stat;
+my $next_stat = time() + 4;
 sub __run_prefork
 {
   my $self          = shift;
@@ -326,14 +327,17 @@ sub __run_prefork
     my $mf = $self->{ 'MAXFORK' };
     $tk = $mf if $mf > 0 and $tk > $mf; # MAXFORK cap
 
-    if( time() > $next_stat and $bk > 0 )
+    if( time() > $next_stat )
       {
-      my $bc = $self->{ 'STAT' }{ 'BUSY_COUNT' };
-print STDERR ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> STAT: TOTAL_BUSY_COUNT=$bc\n";
-      $self->{ 'STAT' }{ 'IDLE_FREQ' }{ int( $ik / 5 ) * 5 }++;
+      $self->__sha_lock_ro( 'MASTER SHARED STATE' );
+      $self->log_debug( "debug: shared memory state:\n" . Dumper( $self->{ 'SHA' } ) );
+      $self->__sha_unlock( 'MASTER SHARED STATE' );
+
+      $self->log_debug( "debug: stats:\n" . Dumper( $self->{ 'STAT' } ) );
+      $self->{ 'STAT' }{ 'IDLE_FREQ' }{ int( $ik / 5 ) * 5 }++ if $bk > 0;
       $next_stat = time() + 4;
       }
-    print STDERR "STAT: KIDS: $kk   BUSY: $bk   IDLE: $ik   TOFORK: $tk   WILLFORK?: $self->{ 'KIDS' } < $tk\n" . Dumper( $self->{ 'STAT' } ) if $self->{ 'DEBUG' };
+    $self->log_debug( "debug: kids: $kk   busy: $bk   idle: $ik   to_fork: $tk   will_fork?: $kk < $tk" );
 #print STDERR Dumper( $self->{ 'KID_PIDS' }, $self->{ 'SHA' } );
 
     #while( $self->{ 'KIDS' } < $prefork_count || ( $ik < ( 1 + $prefork_count / 10 ) and $self->{ 'KIDS' } < $kk + $prefork_count / 2 ) )
@@ -369,8 +373,8 @@ print STDERR ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> STAT: TOTAL_BUSY_COUNT=$bc\n";
         $SIG{ 'HUP'   } = sub { $self->__child_sig_hup();   };
         $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
         $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
-        $SIG{ 'RTMIN' } = 'IGNORE';
-        $SIG{ 'RTMAX' } = 'IGNORE';
+        $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
+        $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
         
         $self->on_child_start();
         
@@ -382,7 +386,7 @@ print STDERR ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> STAT: TOTAL_BUSY_COUNT=$bc\n";
           last if $self->{ 'BREAK_MAIN_LOOP' };
           last unless $self->__run_preforked_child( $server_socket );
           $kid_idle = $self->{ 'LPTIME' } > 0 ? time() - $self->{ 'LPTIME' } : - ( time() - $self->{ 'SPTIME' } );
-          last if $self->{ 'LPTIME' } > 0 and $kid_idle > 11;
+          last if $self->{ 'LPTIME' } > 0 and $kid_idle > $self->{ 'PX_IDLE' };
 
           my $tt = $0;
           $tt =~ s/ \[-?\d+\]//;
@@ -450,51 +454,38 @@ sub __run_preforked_child
 sub __sha_lock_ro
 {
   my $self = shift;
-
-  my $c = 3200;
-  my $rc;
-  while( $c-- )
-    {
-    $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_EX );
-    next if ! $rc and ( $!{EINTR} or  $!{EAGAIN} );
-#    print STDERR "RO lock c $c, rc $rc $!\n";
-    return $rc if $rc;
-    }
-print STDERR "cannot obtain RO lock for SHA! [$rc] $!\n";
-  return undef;  
+  return $self->__sha_obtain_lock( IPC::Shareable::LOCK_SH, 'SH' );
 }
 
 sub __sha_lock_rw
 {
   my $self = shift;
-  
-  my $c = 3200;
-  my $rc;
-  while( $c-- )
-    {
-    $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_EX );
-    next if ! $rc and ( $!{EINTR} or  $!{EAGAIN} );
-#    print STDERR "RO lock c $c, rc $rc $!\n";
-    return $rc if $rc;
-    }
-print STDERR "cannot obtain RW lock for SHA! [$rc] $!\n";
-  return undef;  
+  return $self->__sha_obtain_lock( IPC::Shareable::LOCK_EX, 'EX' );
 }
 
 sub __sha_unlock
 {
   my $self = shift;
+  return $self->__sha_obtain_lock( IPC::Shareable::LOCK_UN, 'UN' );
+}
+
+
+sub __sha_obtain_lock
+{
+  my $self = shift;
+  my $op   = shift;
+  my $str  = shift;
   
-  my $c = 3200;
   my $rc;
-  while( $c-- )
+  while( ! $rc )
     {
-    $rc = tied( %{ $self->{ 'SHA' } } )->lock( IPC::Shareable::LOCK_UN );
-    next if ! $rc and ( $!{EINTR} or  $!{EAGAIN} );
-#    print STDERR "RO lock c $c, rc $rc $!\n";
+    $rc = tied( %{ $self->{ 'SHA' } } )->lock( $op );
     return $rc if $rc;
+    next if $!{EINTR} or $!{EAGAIN};
+    $self->log( "error: cannot obtain $str lock for SHA! [$rc] $! retry in 1 second" );  
+    sleep(1);
     }
-print STDERR "cannot release lock for SHA! [$rc] $!\n";
+  $self->log( "error: cannot obtain $str lock for SHA! $!" );  
   return undef;  
 }
 
@@ -575,9 +566,8 @@ sub __im_in_state
   $tt =~ s/ \| .+//;
   $0 = $tt . ' | ' . $self->{ 'SHA' }{ 'PIDS' }{ $$ };
   
-#  return kill( 'RTMIN', $ppid ) if $state eq '-';
-#  return kill( 'RTMAX', $ppid ) if $state eq '*';
-  return kill( 'USR2', $ppid );
+  return kill( 'RTMIN', $ppid ) if $state eq '-';
+  return kill( 'RTMAX', $ppid ) if $state eq '*';
   return 0;
 }
 
@@ -807,6 +797,24 @@ sub socket_can_read
   my $rin;
   vec( $rin, fileno( $sock ), 1 ) = 1;
   return select( $rin, undef, undef, $timeout ) > 0;
+}
+
+##############################################################################
+
+# this function is used to log messages including debug. should be reimplemented
+sub log
+{
+  my $self = shift;
+  # should be reimplemented
+  print STDERR "$_\n" for @_;
+}
+
+# used for debug log messages when DEBUG is enabled
+sub log_debug
+{
+  my $self = shift;
+  return unless $self->{ 'DEBUG' };
+  return $self->log( @_ );
 }
 
 ##############################################################################
