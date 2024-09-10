@@ -191,6 +191,14 @@ sub run
 
   $self->propagate_signal( 'TERM' );
 
+  # wait kids before removing shared memory, limit to 16 secods...
+  my $wait_time = time();
+  while( $self->{ 'KIDS' } and ( time() - $wait_time < 16 ) )
+    {
+    $self->log( "status: about to exit, waiting kids: " . $self->{ 'KIDS' } );
+    sleep(1);
+    }
+  
   tied( %{ $self->{ 'SHA' } } )->remove();
   delete $self->{ 'SHA' };
 
@@ -472,7 +480,8 @@ sub __sha_obtain_lock
     sleep(1);
     }
   $self->log( "error: cannot obtain $str lock for SHA! $!" );  
-  die "error: [$$] cannot obtain $str lock for SHA! $!, will exit\n";
+  my $ppid = $self->get_parent_pid();
+  die "error: [$ppid/$$] cannot obtain $str lock for SHA! $!, will exit\n";
   return undef;  
 }
 
