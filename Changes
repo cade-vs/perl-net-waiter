@@ -4,6 +4,8 @@ Revision history for Perl extension Net::Waiter
 
     1. fixed bug with shared memory locking logic
     2. added more run-time stats
+    3. added log() and log_debug()
+    4. initial statistics, will be used for autotuning in the future
 
 1.13  2024-07-02
 
