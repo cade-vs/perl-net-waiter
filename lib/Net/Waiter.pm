@@ -331,7 +331,8 @@ sub __run_prefork
 
     $next_stat = time() + 4;
     }
-  $self->log_debug( "debug: kids: $kk   busy: $bk   idle: $ik   to_fork: $tk   will_fork?: $kk < $tk" );
+  my $tbk = $self->{ 'STAT' }{ 'BUSY_COUNT' };
+  $self->log_debug( "debug: kids: $kk   busy: $bk   idle: $ik   to_fork: $tk   will_fork?: $kk < $tk  total busy count: $tbk" );
 
   while( $self->{ 'KIDS' } < $tk )
     {
@@ -458,6 +459,7 @@ sub __sha_obtain_lock
   my $op   = shift;
   my $str  = shift;
   
+  my $limit = 16;
   my $rc;
   while( ! $rc )
     {
@@ -465,9 +467,12 @@ sub __sha_obtain_lock
     return $rc if $rc;
     next if $!{EINTR} or $!{EAGAIN};
     $self->log( "error: cannot obtain $str lock for SHA! [$rc] $! retry in 1 second" );  
+    last if $self->{ 'BREAK_MAIN_LOOP' };
+    last unless $limit--;
     sleep(1);
     }
   $self->log( "error: cannot obtain $str lock for SHA! $!" );  
+  die "error: [$$] cannot obtain $str lock for SHA! $!, will exit\n";
   return undef;  
 }
 

@@ -4,4 +4,5 @@ Changes
 README
 Makefile.PL
 lib/Net/Waiter.pm
-
+demo/MyWaiter.pm
+demo/try_my_waiter.pl
