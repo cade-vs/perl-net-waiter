@@ -4,6 +4,7 @@ WriteMakefile(
 
   NAME            => 'Net::Waiter',
   VERSION_FROM    => 'lib/Net/Waiter.pm',
+  ABSTRACT_FROM   => 'lib/Net/Waiter.pm',
   META_MERGE      => {
                      'meta-spec'     => { 
                                         version => 2 
