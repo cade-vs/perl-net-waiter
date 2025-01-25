@@ -921,11 +921,12 @@ MAXFORK counts.
 
 if SSL is enabled then additional IO::Socket::SSL options can be added:
 
-   SSL_cert_file => 'cert.pem',
-   SSL_key_file  => 'key.pem', 
-   SSL_ca_file   => 'ca.pem',
+   SSL_cert_file   => 'cert.pem',
+   SSL_key_file    => 'key.pem', 
+   SSL_ca_file     => 'ca.pem',
+   SSL_verify_mode => 1,
 
-for further details, check IO::Socket::SSL docs.   
+for further details, check IO::Socket::SSL docs. all SSL_ options are allowed.
    
 =head2 run()
 
@@ -942,7 +943,7 @@ Run returns exit code:
 
 Breaks main server loop. Calling break_main_loop() is possible from parent 
 server process handler functions (see HANDLER FUNCTIONS below) but it will 
-not break the main loop immediately. It will just rise flag which will stop 
+not break the main loop immediately. It will just raise flag which will stop 
 when control is returned to the next server loop.
 
 =head2 ssl_in_use()
@@ -977,7 +978,7 @@ Returns list of forked child pids. Available only in parent processes.
 
 Sends signal 'SIGNAME' to all child processes.
 
-=head1 HANDLER FUNCTIONS
+=head1 EVENT HANDLING FUNCTIONS
 
 All of the following methods are empty in the base implementation and are
 expected to be reimplemented. The list order below is chronological but the
@@ -1073,6 +1074,14 @@ specific log facility. By default it prints messages to STDERR. Can be
 reimplemented empty to supress any messages.
                                                                                         
 =head1 NOTES
+
+in PREFORK mode, fixed initial number of processes will be forked. each will
+accept socket and wait for connection. if waiting time for accept reaches a
+limit (default to 31 seconds, see PX_IDLE option above) the process will exit
+and main process will decide if new one should be forked or not.
+
+PREFORK process count may momentarily fall under the initial/lower count limit 
+if several processes exit on idle.
 
 SIG_CHLD handler defaults to IGNORE in child processes. 
 whoever forks further here, should reinstall signal handler if needed. 
