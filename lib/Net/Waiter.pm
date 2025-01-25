@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Data::Dumper;
 
-our $VERSION = '1.15';
+our $VERSION = '1.16';
 
 $Data::Dumper::Terse = 1;
  
@@ -98,6 +98,8 @@ sub run
   $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
   $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
 
+  $self->on_server_begin();
+
   my $server_socket;
 
   my $sock_pkg;
@@ -135,10 +137,7 @@ sub run
     $self->on_listen_ok();
     }
 
-
-  my $tm = time();
-  my $sha_key = $self->{ 'SHA_KEY' } = "$0.$$.$tm";
-  $self->{ 'SHA' } = new IPC::Shareable key => $sha_key, size => 256*1024, mode => 0600, create => 1 or die "fatal: cannot create shared memory segment\n";
+  $self->__reinstall_sha();
 
   while(4)
     {
@@ -155,26 +154,49 @@ sub run
       # no need for sleep since, select/accept will block for a while (4 sec)
       }
 
-    $self->__sha_lock_ro( 'MASTER STATS UPDATE' );
-
-    $self->{ 'KIDS_BUSY'   } = 0;
-    for my $cpid ( keys %{ $self->{ 'SHA' }{ 'PIDS' } } )
+    eval
       {
-      next unless $cpid > 0;
-      if( ! exists $self->{ 'KID_PIDS' }{ $cpid } )
-        {
-        delete $self->{ 'SHA' }{ 'PIDS' }{ $cpid };
-        }
-      else
-        {
-        my $v = $self->{ 'SHA' }{ 'PIDS' }{ $cpid };
-        my ( $b, $c ) = split /:/, $v;
-        $self->{ 'KIDS_BUSY'  }++ if $b eq '*';
-        }  
-      }
-    $self->{ 'STAT' }{ 'BUSY_COUNT' } = $self->{ 'SHA' }{ 'STAT' }{ 'BUSY_COUNT' };
+      $self->__sha_lock_ro( 'MASTER STATS UPDATE' );
 
-    $self->__sha_unlock( 'MASTER STATS UPDATE' );
+      $self->{ 'KIDS_BUSY'   } = 0;
+      for my $cpid ( keys %{ $self->{ 'SHA' }{ 'PIDS' } } )
+        {
+        next unless $cpid > 0;
+        if( ! exists $self->{ 'KID_PIDS' }{ $cpid } )
+          {
+          delete $self->{ 'SHA' }{ 'PIDS' }{ $cpid };
+          }
+        else
+          {
+          my $v = $self->{ 'SHA' }{ 'PIDS' }{ $cpid };
+          my ( $b, $c ) = split /:/, $v;
+          $self->{ 'KIDS_BUSY'  }++ if $b eq '*';
+          }  
+        }
+      $self->{ 'STAT' }{ 'BUSY_COUNT' } = $self->{ 'SHA' }{ 'STAT' }{ 'BUSY_COUNT' };
+
+      $self->__sha_unlock( 'MASTER STATS UPDATE' );
+      };
+    if( $@ )  
+      {
+      $self->log( "error: main loop kids stats management: $@" );
+      $self->log( "status: reinstalling SHA, trying to recover..." );
+
+      my $wait_time = time();
+      while( $self->{ 'KIDS' } and ( time() - $wait_time < 8 ) )
+        {
+        $self->propagate_signal( 'TERM' );
+        $self->log( "status: waiting current kids: " . $self->{ 'KIDS' } );
+        sleep(1);
+        }
+        
+      $self->propagate_signal( 'KILL' );
+      sleep(2);
+      
+      $self->__reinstall_sha();
+      $self->{ 'KIDS_BUSY'   } = 0;
+      }
+      
     }
 
   $self->propagate_signal( 'TERM' );
@@ -434,6 +456,16 @@ sub __prefork_print_stat
 
 ##############################################################################
 
+sub __reinstall_sha
+{
+  my $self = shift;
+
+  my $tm = time();
+  my $sha_key = $self->{ 'SHA_KEY' } = "$0.$$.$tm";
+  $self->{ 'SHA' } = new IPC::Shareable key => $sha_key, size => 256*1024, mode => 0600, create => 1 or die "fatal: cannot create shared memory segment\n";
+  return 1;
+}
+
 #use Data::Tools;
 sub __sha_lock_ro
 {
@@ -460,7 +492,7 @@ sub __sha_obtain_lock
   my $op   = shift;
   my $str  = shift;
   
-  my $limit = 16;
+  my $limit = 4;
   my $rc;
   while( ! $rc )
     {
@@ -675,6 +707,10 @@ sub __sig_kid_busy
 }
 
 ##############################################################################
+
+sub on_server_begin
+{
+}
 
 sub on_listen_ok
 {
