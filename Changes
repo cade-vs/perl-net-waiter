@@ -1,5 +1,9 @@
 Revision history for Perl extension Net::Waiter
 
+1.17  2025-01-26
+
+    1. added stop_all_kids() and optimizing restart and shutdown logic.
+
 1.16  2025-01-25
 
     1. reinstalls shared memory and forked processes state if cannot lock

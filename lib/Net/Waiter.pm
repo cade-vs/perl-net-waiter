@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Data::Dumper;
 
-our $VERSION = '1.16';
+our $VERSION = '1.17';
 
 $Data::Dumper::Terse = 1;
  
@@ -182,32 +182,18 @@ sub run
       $self->log( "error: main loop kids stats management: $@" );
       $self->log( "status: reinstalling SHA, trying to recover..." );
 
-      my $wait_time = time();
-      while( $self->{ 'KIDS' } and ( time() - $wait_time < 8 ) )
-        {
-        $self->propagate_signal( 'TERM' );
-        $self->log( "status: waiting current kids: " . $self->{ 'KIDS' } );
-        sleep(1);
-        }
-        
-      $self->propagate_signal( 'KILL' );
-      sleep(2);
+      $self->stop_all_kids( 'TERM' );
+      $self->stop_all_kids( 'KILL' );
+      sleep(1);
+      
+      $self->{ 'KIDS_BUSY'   } = 0;
       
       $self->__reinstall_sha();
-      $self->{ 'KIDS_BUSY'   } = 0;
       }
       
     }
 
-  $self->propagate_signal( 'TERM' );
-
-  # wait kids before removing shared memory, limit to 16 secods...
-  my $wait_time = time();
-  while( $self->{ 'KIDS' } and ( time() - $wait_time < 16 ) )
-    {
-    $self->log( "status: about to exit, waiting kids: " . $self->{ 'KIDS' } );
-    sleep(1);
-    }
+  $self->stop_all_kids( 'TERM' );
   
   tied( %{ $self->{ 'SHA' } } )->remove();
   delete $self->{ 'SHA' };
@@ -439,9 +425,17 @@ sub __prefork_print_stat
 {
   my $self = shift;
 
-  $self->__sha_lock_ro( 'MASTER SHARED STATE' );
-  $self->log_debug( "debug: shared memory state:\n" . Dumper( $self->{ 'SHA' } ) );
-  $self->__sha_unlock( 'MASTER SHARED STATE' );
+  eval
+    {
+    $self->__sha_lock_ro( 'MASTER SHARED STATE' );
+    $self->log_debug( "debug: shared memory state:\n" . Dumper( $self->{ 'SHA' } ) );
+    $self->__sha_unlock( 'MASTER SHARED STATE' );
+    };
+  if( $@ )  
+    {
+    $self->log_debug( "debug: stats unavailable" );
+    return;
+    }
 
   $self->log_debug( "debug: stats:\n" . Dumper( $self->{ 'STAT' } ) );
 
@@ -452,6 +446,23 @@ sub __prefork_print_stat
     $self->log_debug( sprintf( "debug: %3d idle(s) => %3d time(s)", $k, $v ) );
     last unless $_c--;
     }
+}
+
+sub stop_all_kids
+{
+  my $self = shift;
+
+  my $sig = shift || 'TERM';
+  
+  my $wait_time = time();
+  while( $self->{ 'KIDS' } and ( time() - $wait_time < 8 ) )
+    {
+    $self->log( "status: waiting current kids, sending $sig: " . $self->{ 'KIDS' } );
+    $self->propagate_signal( $sig );
+    sleep(1); # will be cancelled on SIGCHILD anyway...
+    }
+  
+  return 1;  
 }
 
 ##############################################################################
