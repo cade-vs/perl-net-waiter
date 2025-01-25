@@ -1120,9 +1120,9 @@ GITHUB repository:
 
   Vladi Belperchinov-Shabanski "Cade"
 
-  <cade@biscom.net> <cade@cpan.org> <cade@datamax.bg>
+  <cade@noxrun.com> <cade@bis.bg> <cade@cpan.org>
 
-  http://cade.datamax.bg
+  http://cade.noxrun.com
 
 =cut
 
