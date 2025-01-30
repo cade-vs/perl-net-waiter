@@ -589,14 +589,16 @@ sub __im_in_state
   my $ppid = $self->get_parent_pid();
   return 0 if $ppid == $$; # states are available only for kids
 
+  my $set_state = $state . ":" . $self->{ 'BUSY_COUNT' };
+
   $self->__sha_lock_rw( 'KID STATE' );
-  $self->{ 'SHA' }{ 'PIDS' }{ $$ } = $state . ":" . $self->{ 'BUSY_COUNT' };
+  $self->{ 'SHA' }{ 'PIDS' }{ $$ } = $set_state;
   $self->{ 'SHA' }{ 'STAT' }{ 'BUSY_COUNT' }++ if $state eq '*';
   $self->__sha_unlock( 'KID STATE' );
 
   my $tt = $0;
   $tt =~ s/ \| .+//;
-  $0 = $tt . ' | ' . $self->{ 'SHA' }{ 'PIDS' }{ $$ };
+  $0 = $tt . ' | ' . $set_state;
   
   return kill( 'RTMIN', $ppid ) if $state eq '-';
   return kill( 'RTMAX', $ppid ) if $state eq '*';
