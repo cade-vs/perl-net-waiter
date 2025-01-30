@@ -156,7 +156,7 @@ sub run
 
     eval
       {
-      $self->__sha_lock_ro( 'MASTER STATS UPDATE' );
+      $self->__sha_lock_rw( 'MASTER STATS UPDATE' );
 
       $self->{ 'KIDS_BUSY'   } = 0;
       for my $cpid ( keys %{ $self->{ 'SHA' }{ 'PIDS' } } )
