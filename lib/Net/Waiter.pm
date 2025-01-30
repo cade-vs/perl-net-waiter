@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Data::Dumper;
 
-our $VERSION = '1.17';
+our $VERSION = '1.18';
 
 $Data::Dumper::Terse = 1;
  
@@ -97,6 +97,8 @@ sub run
   $SIG{ 'USR2'  } = sub { $self->__sig_usr2();      };
   $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
   $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
+
+  srand();
 
   $self->on_server_begin();
 
@@ -182,6 +184,12 @@ sub run
       $self->log( "error: main loop kids stats management: $@" );
       $self->log( "status: reinstalling SHA, trying to recover..." );
 
+      eval
+        {
+        $self->__sha_unlock( 'MASTER STATS UPDATE' );
+        };
+      # do not need result, if cannot be unlocked there is far bigger problem  
+
       $self->stop_all_kids( 'TERM' );
       $self->stop_all_kids( 'KILL' );
       sleep(1);
@@ -195,7 +203,7 @@ sub run
 
   $self->stop_all_kids( 'TERM' );
   
-  tied( %{ $self->{ 'SHA' } } )->remove();
+  tied( %{ $self->{ 'SHA' } } )->clean_up();
   delete $self->{ 'SHA' };
 
   $self->on_server_close( $server_socket );
@@ -275,10 +283,9 @@ sub __run_forking
   $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
   $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
 
-  srand();
+  $self->{ 'SHA' } = new IPC::Shareable key => $self->{ 'SHA_KEY' } or die "fatal: cannot attach shared memory segment\n";
 
-  my $sha_key = $self->{ 'SHA_KEY' };
-  $self->{ 'SHA' } = new IPC::Shareable key => $sha_key or die "fatal: cannot attach shared memory segment\n";
+  srand();
 
   $client_socket->autoflush( 1 );
   $self->on_child_start();
@@ -359,7 +366,11 @@ sub __run_prefork
       $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
       $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
       $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
+
+      $self->{ 'SHA' } = new IPC::Shareable key => $self->{ 'SHA_KEY' } or die "fatal: cannot attach shared memory segment\n";
       
+      srand();
+
       $self->on_child_start();
       
       $self->im_idle();
@@ -405,8 +416,6 @@ sub __run_preforked_child
   my $sockport = $client_socket->sockport();
 
   $self->on_accept_ok( $client_socket );
-
-  srand();
 
   $self->{ 'BUSY_COUNT' }++;
   $self->im_busy();
@@ -471,9 +480,16 @@ sub __reinstall_sha
 {
   my $self = shift;
 
+  tied( %{ $self->{ 'SHA' } } )->clean_up() if $self->{ 'SHA' };
+
   my $tm = time();
   my $sha_key = $self->{ 'SHA_KEY' } = "$0.$$.$tm";
   $self->{ 'SHA' } = new IPC::Shareable key => $sha_key, size => 256*1024, mode => 0600, create => 1 or die "fatal: cannot create shared memory segment\n";
+  
+  # must be initialized, otherwise kids will create own shared memory segments and parent cannot release them! undocumented
+  $self->{ 'SHA' }{ 'PIDS' } = {}; 
+  $self->{ 'SHA' }{ 'STAT' } = {};
+  
   return 1;
 }
 

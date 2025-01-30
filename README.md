@@ -50,18 +50,23 @@ Creates new Net::Waiter object and sets its options:
     TIMEOUT =>    4, # timeout for accepting connections, defaults to 4 seconds
     SSL     =>    1, # use SSL
 
+    PX_IDLE =>   31, # prefork exit idle time, defaults to 31
+
     PROP_SIGUSR => 1, # if true, will propagate USR1/USR2 signals to childs
+    
+    DEBUG   =>    1, # enable debug mode, prints debug messages
 
 if PREFORK is negative, the absolute value will be used both for PREFORK and
 MAXFORK counts.
 
 if SSL is enabled then additional IO::Socket::SSL options can be added:
 
-    SSL_cert_file => 'cert.pem',
-    SSL_key_file  => 'key.pem', 
-    SSL_ca_file   => 'ca.pem',
+    SSL_cert_file   => 'cert.pem',
+    SSL_key_file    => 'key.pem', 
+    SSL_ca_file     => 'ca.pem',
+    SSL_verify_mode => 1,
 
-for further details, check IO::Socket::SSL docs.   
+for further details, check IO::Socket::SSL docs. all SSL\_ options are allowed.
 
 ## run()
 
@@ -78,7 +83,7 @@ Run returns exit code:
 
 Breaks main server loop. Calling break\_main\_loop() is possible from parent 
 server process handler functions (see HANDLER FUNCTIONS below) but it will 
-not break the main loop immediately. It will just rise flag which will stop 
+not break the main loop immediately. It will just raise flag which will stop 
 when control is returned to the next server loop.
 
 ## ssl\_in\_use()
@@ -113,7 +118,7 @@ Returns list of forked child pids. Available only in parent processes.
 
 Sends signal 'SIGNAME' to all child processes.
 
-# HANDLER FUNCTIONS
+# EVENT HANDLING FUNCTIONS
 
 All of the following methods are empty in the base implementation and are
 expected to be reimplemented. The list order below is chronological but the
@@ -202,7 +207,21 @@ Called when forked (child) process receives USR1 signal.
 
 Called when forked (child) process receives USR2 signal.
 
+## log() and log\_debug()
+
+Called when Waiter prints (debug) messages. Should be reimplemented to use
+specific log facility. By default it prints messages to STDERR. Can be
+reimplemented empty to supress any messages.
+
 # NOTES
+
+in PREFORK mode, fixed initial number of processes will be forked. each will
+accept socket and wait for connection. if waiting time for accept reaches a
+limit (default to 31 seconds, see PX\_IDLE option above) the process will exit
+and main process will decide if new one should be forked or not.
+
+PREFORK process count may momentarily fall under the initial/lower count limit 
+if several processes exit on idle.
 
 SIG\_CHLD handler defaults to IGNORE in child processes. 
 whoever forks further here, should reinstall signal handler if needed. 
@@ -213,10 +232,14 @@ whoever forks further here, should reinstall signal handler if needed.
 
 # REQUIRED MODULES
 
-Net::Waiter is designed to be compact and self sufficient. 
-However it uses some 3rd party modules:
-
-    * IO::Socket::INET
+Net::Waiter tries to use as little modules as possible. Currenlty only those
+core modules are in use:
+  \* IO::Socket::INET
+  \* POSIX ":sys\_wait\_h";
+  \* IO::Socket::INET;
+  \* Sys::SigAction qw( set\_sig\_handler );
+  \* IPC::Shareable;
+  \* Data::Dumper;
 
 # DEMO
 
@@ -238,6 +261,6 @@ GITHUB repository:
 
     Vladi Belperchinov-Shabanski "Cade"
 
-    <cade@biscom.net> <cade@cpan.org> <cade@datamax.bg>
+    <cade@noxrun.com> <cade@bis.bg> <cade@cpan.org>
 
-    http://cade.datamax.bg
+    http://cade.noxrun.com
