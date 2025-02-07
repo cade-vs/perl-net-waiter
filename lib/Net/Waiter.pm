@@ -1112,12 +1112,13 @@ whoever forks further here, should reinstall signal handler if needed.
 
 Net::Waiter tries to use as little modules as possible. Currenlty only those
 core modules are in use:
-  * IO::Socket::INET
-  * POSIX ":sys_wait_h";
-  * IO::Socket::INET;
-  * Sys::SigAction qw( set_sig_handler );
-  * IPC::Shareable;
-  * Data::Dumper;
+
+    * IO::Socket::INET
+    * POSIX ":sys_wait_h";
+    * IO::Socket::INET;
+    * Sys::SigAction qw( set_sig_handler );
+    * IPC::Shareable;
+    * Data::Dumper;
 
 =head1 DEMO
 
