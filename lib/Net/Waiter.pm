@@ -878,7 +878,7 @@ sub log_debug
 
 =head1 NAME
 
-  Net::Waiter compact INET socket server
+Net::Waiter - Compact INET socket server
 
 =head1 SYNOPSIS
 
