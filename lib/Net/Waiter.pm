@@ -274,14 +274,15 @@ sub __run_forking
   delete $self->{ 'KID_PIDS' };
 
   # reinstall signal handlers in the kid
-  $SIG{ 'INT'   } = sub { $self->break_main_loop(); };
-  $SIG{ 'TERM'  } = sub { $self->break_main_loop(); };
-  $SIG{ 'CHLD'  } = 'IGNORE';
+  $SIG{ 'INT'   } = sub { $self->break_main_loop();   };
+  $SIG{ 'TERM'  } = sub { $self->break_main_loop();   };
   $SIG{ 'HUP'   } = sub { $self->__child_sig_hup();   };
   $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
   $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
-  $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
-  $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
+  $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()     };
+  $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()     };
+  # ignored here, if smb needs it, should reinstall
+  $SIG{ 'CHLD'  } = 'IGNORE';
 
   $self->{ 'SHA' } = new IPC::Shareable key => $self->{ 'SHA_KEY' } or die "fatal: cannot attach shared memory segment\n";
 
@@ -358,14 +359,15 @@ sub __run_prefork
       delete $self->{ 'KID_PIDS' };
 
       # reinstall signal handlers in the kid
-      $SIG{ 'INT'   } = sub { $self->break_main_loop(); };
-      $SIG{ 'TERM'  } = sub { $self->break_main_loop(); };
-      $SIG{ 'CHLD'  } = 'IGNORE';
+      $SIG{ 'INT'   } = sub { $self->break_main_loop();   };
+      $SIG{ 'TERM'  } = sub { $self->break_main_loop();   };
       $SIG{ 'HUP'   } = sub { $self->__child_sig_hup();   };
       $SIG{ 'USR1'  } = sub { $self->__child_sig_usr1();  };
       $SIG{ 'USR2'  } = sub { $self->__child_sig_usr2();  };
-      $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()   };
-      $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()   };
+      $SIG{ 'RTMIN' } = sub { $self->__sig_kid_idle()     };
+      $SIG{ 'RTMAX' } = sub { $self->__sig_kid_busy()     };
+      # ignored here, if smb needs it, should reinstall
+      $SIG{ 'CHLD'  } = 'IGNORE';
 
       $self->{ 'SHA' } = new IPC::Shareable key => $self->{ 'SHA_KEY' } or die "fatal: cannot attach shared memory segment\n";
       
@@ -663,7 +665,7 @@ sub __sig_child
     {
     $self->{ 'KIDS' }--;
     delete $self->{ 'KID_PIDS' }{ $cpid };
-    $self->on_sig_child( $cpid );
+    $self->on_sig_child( $cpid, $? );
     }
   $SIG{ 'CHLD' } = sub { $self->__sig_child(); };
 }
