@@ -298,6 +298,7 @@ sub __run_forking
   $self->im_idle();
   
   $self->on_child_exit();
+
   if( ! $self->{ 'NOFORK' } )
     {
     exit();
@@ -390,6 +391,7 @@ sub __run_prefork
         $0 = $tt . " [$kid_idle]";
         }
       $self->on_child_exit();
+
       exit;  
       # ------- child exits here -------
       }  
