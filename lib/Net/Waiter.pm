@@ -16,7 +16,7 @@ use Sys::SigAction qw( set_sig_handler );
 use IPC::Shareable;
 use Data::Dumper;
 
-our $VERSION = '1.18';
+our $VERSION = '1.19';
 
 $Data::Dumper::Terse = 1;
  
